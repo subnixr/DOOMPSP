@@ -73,25 +73,31 @@ OBJS3 = \
 
 OBJS = $(OBJS1) $(OBJS2) $(OBJS3)
 
-INCDIR = ./include
+INCDIR = ../include
 CFLAGS = -O2 -G0 -Wall -fno-exceptions -ffast-math -DNORMALUNIX -DUNROLL -Diabs=abs -fsigned-char -DPSP
 #CFLAGS += -DUSE_FLOAT_FIXED
+CFLAGS += $(EXTRA_CFLAGS)
 CXXFLAGS = $(CFLAGS) -fno-rtti
 ASFLAGS = $(CFLAGS)
 
 BUILD_PRX = 1
 PSP_FW_VERSION = 371
 
-LIBDIR = ./lib
+LIBDIR = ../lib
 LIBS = -lpspwlan -lpspgum -lpspgu -lpsputility -lpspaudiolib -lpspaudio -lpsppower -lm -lpspkubridge
 LDFLAGS =
 
 EXTRA_TARGETS = EBOOT.PBP
 PSP_EBOOT_TITLE = DOOM
-PSP_EBOOT_ICON="icon0.png"
-PSP_EBOOT_UNKPNG="pic0.png"
-PSP_EBOOT_PIC1="pic1.png"
-#PSP_EBOOT_SND0="snd0.at3"
+PSP_EBOOT_SFO = ../xmb/PARAM.SFO
+PSP_EBOOT_ICON = ../xmb/icon0.png
+#PSP_EBOOT_UNKPNG = ../xmb/pic0.png
+PSP_EBOOT_PIC1 = ../xmb/pic1.png
+PSP_EBOOT_SND0 = ../xmb/SND0.AT3
 
 PSPSDK=$(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
+
+# build.mak's PARAM.SFO rule has no prerequisites; always regenerate it
+# so title/flag changes are picked up.
+.PHONY: $(PSP_EBOOT_SFO)

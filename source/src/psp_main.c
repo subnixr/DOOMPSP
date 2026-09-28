@@ -82,7 +82,7 @@ extern int quit_requested;
 
 PSP_MODULE_INFO("DOOM", 0, VERS, REVS);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
-PSP_HEAP_SIZE_MAX();
+PSP_HEAP_SIZE_KB(-2048);	// all free RAM minus 2MB, left for system dialogs (OSK)
 //PSP_HEAP_SIZE_KB(12000);
 
 /* Exit callback */
@@ -203,10 +203,10 @@ int get_text_osk(char *input, unsigned short *intext, unsigned short *desc)
 	osk.base.language = 1;
 	osk.base.buttonSwap = 1;		// X button: 1
 	osk.base.graphicsThread = 17;	// gfx thread pri
-	osk.base.unknown = 19;			// unknown thread pri (?)
+	osk.base.accessThread = 19;			// unknown thread pri (?)
 	osk.base.fontThread = 18;
 	osk.base.soundThread = 16;
-	osk.unk_48 = 1;
+	osk.datacount = 1;
 	osk.data = &data;
 
 	int rc = sceUtilityOskInitStart(&osk);
@@ -1409,7 +1409,7 @@ void psp_gui(void)
 	VideoLevel[2].enable = (psp_tv_cable > 0) ? GUI_ENABLED : GUI_DISABLED;
 	TvLevel[4].enable = (psp_tv_cable == 2) ? GUI_ENABLED : GUI_DISABLED;
 	psp_tv_laced = (psp_tv_cable == 1) ? 1 : 0; // force laced if composite cable
-	sprintf(str,"%s%s",psp_home,"MIDI_Instruments");
+	sprintf(str,"%s%s",psp_home,"midi/MIDI_Instruments");
 	temp = fopen(str, "rb");
 	psp_music_enabled = temp ? 1 : 0;
 	SoundLevel[2].enable = temp ? GUI_ENABLED : GUI_DISABLED;

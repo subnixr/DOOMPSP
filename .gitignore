@@ -1,0 +1,23 @@
+deh/
+iwad/*
+!iwad/doom1.wad
+pwad/
+
+# build artifacts
+source/**/*.o
+source/**/*.elf
+source/**/*.prx
+source/src/EBOOT.PBP
+source/xmb/PARAM.SFO
+source/xmb/.snd0.wav
+
+# audio project sources, fetched tools
+source/xmb/*.flac
+source/xmb/*.RPP
+source/xmb/peaks/
+source/tools/ATRACTool-Rel-Portable/
+
+# user data, local scripts
+saves/
+logs/
+deploy.sh

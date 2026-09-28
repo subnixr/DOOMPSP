@@ -297,7 +297,7 @@ int fillBuffer(SceSize args, void *argp)
 
   // try to set up MIDI instruments
   strcpy(str, psp_home);
-  strcat(str, "MIDI_Instruments");
+  strcat(str, "midi/MIDI_Instruments");
   hnd = fopen(str,"rb");
   if (hnd) {
     fseek(hnd, 0, SEEK_END);
