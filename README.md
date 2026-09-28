@@ -130,4 +130,16 @@ Original history:
 - **v1.1** (2007-10-29): turning while strafing fixed, stick calibration and disable option, cheats, falls back to the shareware WAD.
 - **v1.0** (2007-10-28): first PSP release.
 
+### License
+
+Doom PSP is released under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE). It is based on id Software's DOOM source, which id released under the GPL (version 2 or later) in 1999.
+
+These third-party components keep their own terms:
+
+- intraFont (`source/src/intraFont.*`) by BenHur: Creative Commons Attribution-Share Alike 3.0.
+- Shareware `doom1.wad`: © id Software, redistributable unmodified.
+- Alternate MIDI instruments (Zer0-X/o'Moses, based on GMPlay 1.3 samples): their authors' terms.
+- TV-out code (`source/dvemgr/`, Dark_AleX): its author's terms.
+- PSPSDK headers and libraries: BSD.
+
 More on DOOM: <https://doomwiki.org/wiki/Entryway>
