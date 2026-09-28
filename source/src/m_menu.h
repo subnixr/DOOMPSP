@@ -54,6 +54,9 @@ void M_Init (void);
 // does nothing if menu is already up.
 void M_StartControlPanel (void);
 
+// Step gamma: 0 = cycle (F11), +1/-1 = clamp.
+void M_ChangeGamma (int dir);
+
 
 
 

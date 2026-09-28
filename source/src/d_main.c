@@ -615,7 +615,7 @@ void IdentifyVersion (void)
         strcpy(wadname, &doomwad[p+1]);
     }
 
-    sprintf(basedefault, "%s.doomrc", psp_home);
+    sprintf(basedefault, "%sconfig/.doomrc", psp_home);
 
     if (M_CheckParm ("-shdev"))
     {
@@ -1197,7 +1197,7 @@ void D_DoomMain (void)
             sprintf(file, "%s"SAVEGAMENAME"%c.dsg", temp, myargv[p+1][0]);
         }
         else
-            sprintf(file, SAVEGAMENAME"%c.dsg",myargv[p+1][0]);
+            sprintf(file, "%ssaves/"SAVEGAMENAME"%c.dsg",psp_home,myargv[p+1][0]);
         G_LoadGame (file);
     }
 

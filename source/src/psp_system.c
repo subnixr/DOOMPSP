@@ -2,6 +2,7 @@
 #include <pspctrl.h>
 #include <pspdebug.h>
 #include <psppower.h>
+#include <psploadexec.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,12 +20,15 @@
 #include "d_net.h"
 #include "g_game.h"
 #include "m_argv.h"
+#include "doomstat.h"
+#include "m_menu.h"
 
 #define printf pspDebugScreenPrintf
 
 int pspDveMgrSetVideoOut(int, int, int, int, int, int, int);
 
 extern int psp_use_tv;
+extern char psp_exe_path[];
 
 typedef unsigned char      uint8_t;
 typedef signed   char      sint8_t;
@@ -35,8 +39,6 @@ typedef signed   int       sint32_t;
 extern byte *vid_mem;
 
 int quit_requested = 0;
-
-int psp_cheat_select = 0;
 
 
 #define MIN_ZONESIZE  (2*1024*1024)
@@ -54,6 +56,11 @@ static int stick_maxy = 255;
 static int ctrl_cheat1= 0;
 static int ctrl_cheat2= 0;
 static int ctrl_cheat3= 0;
+static int ctrl_cheat4= 0;
+static int swap_move = 0;   // DPad moves, analog does the DPad actions
+static int swap_turn = 0;   // L/R strafe, move stick X turns
+
+extern int psp_stickturn;
 
 /**********************************************************************/
 // Called by DoomMain.
@@ -100,6 +107,13 @@ void I_Init (void)
 	p = M_CheckParm ("-cheat3");
 	if (p && p < myargc - 1)
 		ctrl_cheat3 = atoi (myargv[p+1]);
+	p = M_CheckParm ("-cheat4");
+	if (p && p < myargc - 1)
+		ctrl_cheat4 = atoi (myargv[p+1]);
+
+	swap_move = M_CheckParm ("-swapmove") != 0;
+	swap_turn = M_CheckParm ("-swapturn") != 0;
+	psp_stickturn = swap_turn;
 
 }
 
@@ -196,7 +210,19 @@ void I_Quit (void)
 	M_SaveDefaults ();
 	I_ShutdownGraphics();
 
-	sceKernelDelayThread(5*1000*1000);
+	// relaunch our own EBOOT so we come back up in the launcher GUI
+	if (psp_exe_path[0])
+	{
+		struct SceKernelLoadExecParam param;
+
+		param.size = sizeof(param);
+		param.args = strlen(psp_exe_path) + 1;
+		param.argp = psp_exe_path;
+		param.key = NULL;
+		sceKernelLoadExec(psp_exe_path, &param);
+	}
+
+	// relaunch failed: fall back to exiting to the XMB
 	sceKernelExitGame();
 }
 
@@ -404,6 +430,7 @@ void psp_do_cheat(int cheat)
 	}
 }
 
+extern boolean menuactive;
 extern int get_text_osk(char *input, unsigned short *intext, unsigned short *desc);
 extern void video_set_vmode(void);
 
@@ -434,17 +461,136 @@ void psp_send_string(void)
 	}
 }
 
+extern int psp_weapon_change;
+
+#define PSP_NUMSLOTS 7
+
+// Weapon slot (number key - 1) holding weapon w
+static int psp_weapon_slot(weapontype_t w)
+{
+    switch (w)
+    {
+      case wp_fist:
+      case wp_chainsaw:     return 0;
+      case wp_pistol:       return 1;
+      case wp_shotgun:
+      case wp_supershotgun: return 2;
+      case wp_chaingun:     return 3;
+      case wp_missile:      return 4;
+      case wp_plasma:       return 5;
+      default:              return 6; // wp_bfg
+    }
+}
+
+// True if the player owns any usable weapon in slot
+static boolean psp_slot_occupied(player_t *player, int slot)
+{
+    switch (slot)
+    {
+      case 0: return true; // fist is always there
+      case 1: return player->weaponowned[wp_pistol];
+      case 2: return player->weaponowned[wp_shotgun]
+                  || (gamemode == commercial && player->weaponowned[wp_supershotgun]);
+      case 3: return player->weaponowned[wp_chaingun];
+      case 4: return player->weaponowned[wp_missile];
+      case 5: return gamemode != shareware && player->weaponowned[wp_plasma];
+      default: return gamemode != shareware && player->weaponowned[wp_bfg];
+    }
+}
+
+// Pick the next (dir = 1) or previous (dir = -1) occupied weapon slot,
+// selecting it like its number key (the engine picks fist/chainsaw and
+// shotgun/super shotgun within the slot)
+static void psp_cycle_weapon(int dir)
+{
+    static const weapontype_t slot_key[PSP_NUMSLOTS] = {
+        wp_fist, wp_pistol, wp_shotgun, wp_chaingun, wp_missile, wp_plasma, wp_bfg
+    };
+    player_t *player;
+    weapontype_t current;
+    int slot, n;
+
+    if (gamestate != GS_LEVEL || menuactive || !playeringame[consoleplayer])
+        return;
+    player = &players[consoleplayer];
+    if (!player->mo || player->playerstate != PST_LIVE)
+        return;
+
+    // start from the weapon already on its way, so repeated taps chain
+    current = player->readyweapon;
+    if (player->pendingweapon != wp_nochange)
+        current = player->pendingweapon;
+    if (psp_weapon_change != wp_nochange)
+        current = psp_weapon_change;
+
+    slot = psp_weapon_slot(current);
+    for (n = 1; n < PSP_NUMSLOTS; n++)
+    {
+        slot = (slot + dir + PSP_NUMSLOTS) % PSP_NUMSLOTS;
+        if (psp_slot_occupied(player, slot))
+        {
+            psp_weapon_change = slot_key[slot];
+            return;
+        }
+    }
+}
+
+static void psp_postkey (evtype_t type, int key)
+{
+    event_t event;
+
+    event.type = type;
+    event.data1 = key;
+    D_PostEvent (&event);
+}
+
+static void psp_tapkey (int key)
+{
+    psp_postkey (ev_keydown, key);
+    psp_postkey (ev_keyup, key);
+}
+
+// hold a key while a button is down (edge triggered)
+static void psp_holdkey (u32 cur, u32 previous, u32 button, int key, int allowed)
+{
+    if (allowed && (cur & button) && !(previous & button))
+        psp_postkey (ev_keydown, key);
+    else if (!(cur & button) && (previous & button))
+        psp_postkey (ev_keyup, key);
+}
+
+#define DPAD_MASK (PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LEFT | PSP_CTRL_RIGHT)
+
+// analog stick as a DPad, with hysteresis so it doesn't chatter
+static u32 psp_stick_dirs (SceCtrlData *pad, u32 previous)
+{
+    int dx = pad->Lx - stick_cx;
+    int dy = pad->Ly - stick_cy;
+    u32 dirs = 0;
+
+    if (dx < -(previous & PSP_CTRL_LEFT ? 40 : 80))
+        dirs |= PSP_CTRL_LEFT;
+    else if (dx > (previous & PSP_CTRL_RIGHT ? 40 : 80))
+        dirs |= PSP_CTRL_RIGHT;
+    if (dy < -(previous & PSP_CTRL_UP ? 40 : 80))
+        dirs |= PSP_CTRL_UP;
+    else if (dy > (previous & PSP_CTRL_DOWN ? 40 : 80))
+        dirs |= PSP_CTRL_DOWN;
+
+    return dirs;
+}
+
+#define PRESSED(b) ((cur & (b)) && !(previous & (b)))
+
 void psp_getevents (void)
 {
 	SceCtrlData pad;
-    event_t event;
     event_t joyevent;
     event_t mouseevent;
     short mousex, mousey;
-    char weapons[8] = { '1', '2', '3', '3', '4', '5', '6', '7' };
     static u32 previous = -1;
-	static int pad_weapon = 2;
 	static int rx, ry;
+	u32 cur, sel, dirs;
 
 	sceCtrlReadBufferPositive(&pad, 1);
 	if (previous == -1)
@@ -453,242 +599,145 @@ void psp_getevents (void)
 		rx = ry = abs(stick_cx - 128) > 16 || abs(stick_cy - 128) > 16 ? 32 : 24;
 	}
 
-	if (!stick_disabled)
+	// movement: analog stick, or the DPad when swapped
+	mousex = mousey = 0;
+	if (swap_move)
+	{
+		if (pad.Buttons & PSP_CTRL_LEFT)
+			mousex = -127;
+		else if (pad.Buttons & PSP_CTRL_RIGHT)
+			mousex = 127;
+		if (pad.Buttons & PSP_CTRL_UP)
+			mousey = 127;
+		else if (pad.Buttons & PSP_CTRL_DOWN)
+			mousey = -127;
+	}
+	else if (!stick_disabled)
 	{
 		// we don't use the min/max yet, and center just affects the comparison
-		mousex = mousey = 0;
-		if (abs(pad.Lx - 128) > rx)
-			mousex = (pad.Lx - 128);
-		if (abs(128 - pad.Ly) > ry)
-			mousey = (128 - pad.Ly);
+		// rescale from the deadzone edge so full tilt = +/-127
+		int dx = pad.Lx - 128;
+		int dy = 128 - pad.Ly;
 
-		if (mousex || mousey)
-		{
-   	    	mouseevent.type = ev_mouse;
-   	    	mouseevent.data1 = 0; // no mouse buttons
-   	    	//mouseevent.data1 = pad.Buttons & PSP_CTRL_SELECT ? 1 : 0;
-   	    	//mouseevent.data1 |= pad.Buttons & PSP_CTRL_START ? 2 : 0;
-   	    	mouseevent.data2 = (mousex << 1);
-       		mouseevent.data3 = (mousey << 1);
-        	D_PostEvent (&mouseevent);
-    	}
+		if (abs(dx) > rx)
+			mousex = (dx > 0 ? dx - rx : dx + rx) * 127 / (127 - rx);
+		if (abs(dy) > ry)
+			mousey = (dy > 0 ? dy - ry : dy + ry) * 127 / (127 - ry);
+		if (mousex > 127) mousex = 127;
+		if (mousex < -127) mousex = -127;
+		if (mousey > 127) mousey = 127;
+		if (mousey < -127) mousey = -127;
 	}
 
-	if (pad.Buttons == previous)
+	if (mousex || mousey)
+	{
+		mouseevent.type = ev_mouse;
+		mouseevent.data1 = 0; // no mouse buttons
+		mouseevent.data2 = mousex;
+		mouseevent.data3 = mousey;
+		D_PostEvent (&mouseevent);
+	}
+
+	// virtual pad: the DPad bits hold the direction actions, which come
+	// from the analog stick when swapped
+	if (swap_move)
+		dirs = stick_disabled ? 0 : psp_stick_dirs(&pad, previous);
+	else
+		dirs = pad.Buttons & DPAD_MASK;
+	cur = (pad.Buttons & ~DPAD_MASK) | dirs;
+
+	if (cur == previous)
 		return;
+
+	sel = cur & PSP_CTRL_SELECT;
 
     joyevent.type = ev_joystick;
     joyevent.data1 = joyevent.data2 = joyevent.data3 = 0;
 
-    // X = Ctrl (Fire)
-    if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && pad.Buttons & PSP_CTRL_CROSS)
-        joyevent.data1 |= 1;
-
-    // [] = SHIFT (Run)
-    if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && pad.Buttons & PSP_CTRL_SQUARE)
-        joyevent.data1 |= 4;
-
-    // O = SPACE (Open/Operate)
-    if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && pad.Buttons & PSP_CTRL_CIRCLE)
-        joyevent.data1 |= 8;
-
-    // directionals
-    if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && pad.Buttons & PSP_CTRL_LEFT)
-        joyevent.data2 = -1;
-    else if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && pad.Buttons & PSP_CTRL_RIGHT)
-        joyevent.data2 = 1;
-    if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && pad.Buttons & PSP_CTRL_UP)
-        joyevent.data3 = -1;
-    else if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && pad.Buttons & PSP_CTRL_DOWN)
-        joyevent.data3 = 1;
-
-    // LTRIGGER = ',' (Strafe Left)
-    if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && pad.Buttons & PSP_CTRL_LTRIGGER && !(previous & PSP_CTRL_LTRIGGER))
-    {
-        event.type = ev_keydown;
-        event.data1 = ',';
-        D_PostEvent (&event);
-    }
-    else if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && !(pad.Buttons & PSP_CTRL_LTRIGGER) && previous & PSP_CTRL_LTRIGGER)
-    {
-        event.type = ev_keyup;
-        event.data1 = ',';
-        D_PostEvent (&event);
-    }
-    // RTRIGGER = '.' (Strafe Right)
-    if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && pad.Buttons & PSP_CTRL_RTRIGGER && !(previous & PSP_CTRL_RTRIGGER))
-    {
-        event.type = ev_keydown;
-        event.data1 = '.';
-        D_PostEvent (&event);
-    }
-    else if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && !(pad.Buttons & PSP_CTRL_RTRIGGER) && previous & PSP_CTRL_RTRIGGER)
-    {
-        event.type = ev_keyup;
-        event.data1 = '.';
-        D_PostEvent (&event);
-    }
-
-    // LTRIGGER + TRIANGLE =  (Prev Weapon)
-    if (pad.Buttons & PSP_CTRL_TRIANGLE && pad.Buttons & PSP_CTRL_LTRIGGER && !(previous & PSP_CTRL_LTRIGGER))
-    {
-        pad_weapon -= 1;
-        if (pad_weapon<0) pad_weapon = 0;
-        event.type = ev_keydown;
-        event.data1 = weapons[pad_weapon];
-        D_PostEvent (&event);
-    }
-    else if (pad.Buttons & PSP_CTRL_TRIANGLE && !(pad.Buttons & PSP_CTRL_LTRIGGER) && previous & PSP_CTRL_LTRIGGER)
-    {
-        event.type = ev_keyup;
-        event.data1 = weapons[pad_weapon];
-        D_PostEvent (&event);
-    }
-    // RTRIGGER + TRIANGLE =  (Next Weapon)
-    if (pad.Buttons & PSP_CTRL_TRIANGLE && pad.Buttons & PSP_CTRL_RTRIGGER && !(previous & PSP_CTRL_RTRIGGER))
-    {
-        pad_weapon += 1;
-        if (pad_weapon>7) pad_weapon = 7;
-        event.type = ev_keydown;
-        event.data1 = weapons[pad_weapon];
-        D_PostEvent (&event);
-    }
-    else if (pad.Buttons & PSP_CTRL_TRIANGLE && !(pad.Buttons & PSP_CTRL_RTRIGGER) && previous & PSP_CTRL_RTRIGGER)
-    {
-        event.type = ev_keyup;
-        event.data1 = weapons[pad_weapon];
-        D_PostEvent (&event);
-    }
-
-    // Start = (Pause)
-    if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && pad.Buttons & PSP_CTRL_START && !(previous & PSP_CTRL_START))
-    {
-        event.type = ev_keydown;
-        event.data1 = KEY_PAUSE;
-        D_PostEvent (&event);
-    }
-    else if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && !(pad.Buttons & PSP_CTRL_START) && previous & PSP_CTRL_START)
-    {
-        event.type = ev_keyup;
-        event.data1 = KEY_PAUSE;
-        D_PostEvent (&event);
-    }
-
-    // Start + TRIANGLE = (get text string)
-    if (pad.Buttons & PSP_CTRL_TRIANGLE && pad.Buttons & PSP_CTRL_START && !(previous & PSP_CTRL_START))
-		psp_send_string();
-
-    // Select = ESC (Menu)
-    if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && pad.Buttons & PSP_CTRL_SELECT && !(previous & PSP_CTRL_SELECT))
-    {
-      event.type = ev_keydown;
-      event.data1 = 9;
-      D_PostEvent (&event);
-    }
-    else if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && !(pad.Buttons & PSP_CTRL_SELECT) && previous & PSP_CTRL_SELECT)
-    {
-      event.type = ev_keyup;
-      event.data1 = 9;
-      D_PostEvent (&event);
-	}
-    // Select + TRIANGLE = TAB (Show Map)
-    if (pad.Buttons & PSP_CTRL_TRIANGLE && pad.Buttons & PSP_CTRL_SELECT && !(previous & PSP_CTRL_SELECT))
-    {
-        event.type = ev_keydown;
-        event.data1 = KEY_ESCAPE;
-        D_PostEvent (&event);
-    }
-    else if (pad.Buttons & PSP_CTRL_TRIANGLE && !(pad.Buttons & PSP_CTRL_SELECT) && previous & PSP_CTRL_SELECT)
-    {
-        event.type = ev_keyup;
-        event.data1 = KEY_ESCAPE;
-        D_PostEvent (&event);
-    }
-
-    // UP + TRIANGLE =  F11 (Gamma)
-    if (pad.Buttons & PSP_CTRL_TRIANGLE && pad.Buttons & PSP_CTRL_UP && !(previous & PSP_CTRL_UP))
-    {
-        pad_weapon -= 1;
-        if (pad_weapon<1) pad_weapon = 1;
-        event.type = ev_keydown;
-        event.data1 = KEY_F11;
-        D_PostEvent (&event);
-    }
-    else if (pad.Buttons & PSP_CTRL_TRIANGLE && !(pad.Buttons & PSP_CTRL_UP) && previous & PSP_CTRL_UP)
-    {
-        event.type = ev_keyup;
-        event.data1 = KEY_F11;
-        D_PostEvent (&event);
-    }
-
-    // DOWN + TRIANGLE =  F5 (Detail)
-    if (pad.Buttons & PSP_CTRL_TRIANGLE && pad.Buttons & PSP_CTRL_DOWN && !(previous & PSP_CTRL_DOWN))
-    {
-        pad_weapon -= 1;
-        if (pad_weapon<1) pad_weapon = 1;
-        event.type = ev_keydown;
-        event.data1 = KEY_F5;
-        D_PostEvent (&event);
-    }
-    else if (pad.Buttons & PSP_CTRL_TRIANGLE && !(pad.Buttons & PSP_CTRL_DOWN) && previous & PSP_CTRL_DOWN)
-    {
-        event.type = ev_keyup;
-        event.data1 = KEY_F5;
-        D_PostEvent (&event);
-    }
-
-    // CIRCLE + TRIANGLE =  (Cheat1)
-    if (pad.Buttons & PSP_CTRL_TRIANGLE && pad.Buttons & PSP_CTRL_CIRCLE && !(previous & PSP_CTRL_CIRCLE))
-		psp_do_cheat(ctrl_cheat1);
-
-    // CROSS + TRIANGLE =  (Cheat2)
-    if (pad.Buttons & PSP_CTRL_TRIANGLE && pad.Buttons & PSP_CTRL_CROSS && !(previous & PSP_CTRL_CROSS))
-		psp_do_cheat(ctrl_cheat2);
-
-    // SQUARE + TRIANGLE =  (Cheat1)
-    if (pad.Buttons & PSP_CTRL_TRIANGLE && pad.Buttons & PSP_CTRL_SQUARE && !(previous & PSP_CTRL_SQUARE))
-		psp_do_cheat(ctrl_cheat3);
-
-	// LEFT + TRIANGLE = (Prev Cheat)
-    if (pad.Buttons & PSP_CTRL_TRIANGLE && pad.Buttons & PSP_CTRL_LEFT && !(previous & PSP_CTRL_LEFT))
-    	psp_cheat_select = psp_cheat_select > 0 ? psp_cheat_select - 1 : 12;
-
-	// RIGHT + TRIANGLE = (Next Cheat)
-    if (pad.Buttons & PSP_CTRL_TRIANGLE && pad.Buttons & PSP_CTRL_RIGHT && !(previous & PSP_CTRL_RIGHT))
-    	psp_cheat_select = psp_cheat_select < 12 ? psp_cheat_select + 1 : 0;
-
-    // TRIANGLE release = y / BACKSPACE (Exit, Backspace, or do cheat when done selecting)
-    if (!(pad.Buttons & PSP_CTRL_TRIANGLE) && previous & PSP_CTRL_TRIANGLE)
-    {
-		if (psp_cheat_select)
+	if (menuactive)
+	{
+		// menu: directions navigate, CROSS = enter/yes, CIRCLE = back/no
+		if (!sel)
 		{
-			psp_do_cheat(psp_cheat_select);
-			psp_cheat_select = 0;
+			if (cur & PSP_CTRL_LEFT)
+				joyevent.data2 = -1;
+			else if (cur & PSP_CTRL_RIGHT)
+				joyevent.data2 = 1;
+			if (cur & PSP_CTRL_UP)
+				joyevent.data3 = -1;
+			else if (cur & PSP_CTRL_DOWN)
+				joyevent.data3 = 1;
+
+			if (PRESSED(PSP_CTRL_CROSS))
+				psp_tapkey (KEY_ENTER);
+			if (PRESSED(PSP_CTRL_CIRCLE))
+				psp_tapkey (KEY_BACKSPACE);
 		}
+	}
+	else if (!sel)
+	{
+		// SQUARE = fire, CROSS = run, TRIANGLE/CIRCLE = use
+		if (cur & PSP_CTRL_SQUARE)
+			joyevent.data1 |= 1;
+		if (cur & PSP_CTRL_CROSS)
+			joyevent.data1 |= 4;
+		if (cur & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE))
+			joyevent.data1 |= 8;
 
-        event.type = ev_keydown;
-        event.data1 = 'y';
-        D_PostEvent (&event);
-        event.type = ev_keyup;
-        event.data1 = 'y';
-        D_PostEvent (&event);
+		// LEFT/RIGHT = prev/next weapon
+		if (PRESSED(PSP_CTRL_LEFT))
+			psp_cycle_weapon(-1);
+		if (PRESSED(PSP_CTRL_RIGHT))
+			psp_cycle_weapon(1);
 
-        event.type = ev_keydown;
-        event.data1 = KEY_BACKSPACE;
-        D_PostEvent (&event);
-        event.type = ev_keyup;
-        event.data1 = KEY_BACKSPACE;
-        D_PostEvent (&event);
+		// DOWN = automap, UP = automap zoom (whole map / normal)
+		if (PRESSED(PSP_CTRL_DOWN))
+			psp_tapkey (KEY_TAB);
+		if (PRESSED(PSP_CTRL_UP) && automapactive)
+			psp_tapkey ('0');
+	}
 
-        event.type = ev_keydown;
-        event.data1 = KEY_BACKSPACE;
-        D_PostEvent (&event);
-        event.type = ev_keyup;
-        event.data1 = KEY_BACKSPACE;
-        D_PostEvent (&event);
-    }
+	// L/R = turn, or strafe when swapped (keys released even with SELECT)
+	psp_holdkey (cur, previous, PSP_CTRL_LTRIGGER,
+		swap_turn ? ',' : KEY_LEFTARROW, !sel && !menuactive);
+	psp_holdkey (cur, previous, PSP_CTRL_RTRIGGER,
+		swap_turn ? '.' : KEY_RIGHTARROW, !sel && !menuactive);
+
+	if (!sel)
+	{
+		// START = menu (single player pauses while it's up)
+		if (PRESSED(PSP_CTRL_START))
+			psp_tapkey (KEY_ESCAPE);
+	}
+	else
+	{
+		// SELECT + START = on screen keyboard
+		if (PRESSED(PSP_CTRL_START))
+			psp_send_string();
+
+		if (!menuactive)
+		{
+			// SELECT + face buttons = launcher cheats
+			if (PRESSED(PSP_CTRL_CIRCLE))
+				psp_do_cheat(ctrl_cheat1);
+			if (PRESSED(PSP_CTRL_CROSS))
+				psp_do_cheat(ctrl_cheat2);
+			if (PRESSED(PSP_CTRL_SQUARE))
+				psp_do_cheat(ctrl_cheat3);
+			if (PRESSED(PSP_CTRL_TRIANGLE))
+				psp_do_cheat(ctrl_cheat4);
+
+			// SELECT + RIGHT/LEFT = gamma up/down, SELECT + DOWN = detail
+			if (PRESSED(PSP_CTRL_RIGHT))
+				M_ChangeGamma(1);
+			if (PRESSED(PSP_CTRL_LEFT))
+				M_ChangeGamma(-1);
+			if (PRESSED(PSP_CTRL_DOWN))
+				psp_tapkey (KEY_F5);
+		}
+	}
 
     D_PostEvent (&joyevent);
 
-	previous = pad.Buttons;
+	previous = cur;
 }

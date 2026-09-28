@@ -70,6 +70,8 @@ rcsid[] = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp $";
 
 #include "m_menu.h"
 
+extern char psp_home[256];
+
 
 
 extern patch_t*		hu_font[HU_FONTSIZE];
@@ -531,7 +533,7 @@ void M_ReadSaveStrings(void)
 	if (M_CheckParm("-cdrom"))
 	    sprintf(name,"c:\\doomdata\\"SAVEGAMENAME"%d.dsg",i);
 	else
-	    sprintf(name,SAVEGAMENAME"%d.dsg",i);
+	    sprintf(name,"%ssaves/"SAVEGAMENAME"%d.dsg",psp_home,i);
 
 #ifdef PSP //__VBCC__
 	handle = fopen(name, "rb");
@@ -606,7 +608,7 @@ void M_LoadSelect(int choice)
     if (M_CheckParm("-cdrom"))
 	sprintf(name,"c:\\doomdata\\"SAVEGAMENAME"%d.dsg",choice);
     else
-	sprintf(name,SAVEGAMENAME"%d.dsg",choice);
+	sprintf(name,"%ssaves/"SAVEGAMENAME"%d.dsg",psp_home,choice);
     G_LoadGame (name);
     M_ClearMenus ();
 }
@@ -1367,6 +1369,27 @@ M_WriteText
 //
 
 //
+// M_ChangeGamma
+// dir 0 = cycle up with wraparound (F11), +1/-1 = step and clamp (PSP)
+//
+void M_ChangeGamma (int dir)
+{
+    if (dir == 0)
+	usegamma = usegamma < 4 ? usegamma + 1 : 0;
+    else
+    {
+	usegamma += dir;
+	if (usegamma < 0)
+	    usegamma = 0;
+	if (usegamma > 4)
+	    usegamma = 4;
+    }
+    players[consoleplayer].message = gammamsg[usegamma];
+    I_RecalcPalettes ();
+    I_SetPalette (W_CacheLumpName ("PLAYPAL",PU_CACHE), 0);
+}
+
+//
 // M_Responder
 //
 boolean M_Responder (event_t* ev)
@@ -1517,6 +1540,15 @@ boolean M_Responder (event_t* ev)
     // Take care of any messages that need input
     if (messageToPrint)
     {
+	// PSP: CROSS (enter) answers yes, CIRCLE (backspace) answers no
+	if (messageNeedsInput == true)
+	{
+	    if (ch == KEY_ENTER)
+		ch = 'y';
+	    else if (ch == KEY_BACKSPACE)
+		ch = 'n';
+	}
+
 	if (messageNeedsInput == true &&
 	    !(ch == ' ' || ch == 'n' || ch == 'y' || ch == KEY_ESCAPE))
 	    return false;
@@ -1618,12 +1650,7 @@ boolean M_Responder (event_t* ev)
 	    return true;
 
 	  case KEY_F11:           // gamma toggle
-	    usegamma++;
-	    if (usegamma > 4)
-		usegamma = 0;
-	    players[consoleplayer].message = gammamsg[usegamma];
-	    I_RecalcPalettes ();
-	    I_SetPalette (W_CacheLumpName ("PLAYPAL",PU_CACHE), 0);
+	    M_ChangeGamma(0);
 	    return true;
 
 	}

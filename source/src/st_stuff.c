@@ -490,8 +490,6 @@ cheatseq_t      cheat_mypos = { cheat_mypos_seq, 0 };
 //
 extern char*    mapnames[];
 
-extern int psp_cheat_select;
-
 
 //
 // STATUS BAR CODE
@@ -520,29 +518,12 @@ int idkfa_armor=200;
 int idkfa_armor_class=2;
 int god_health=100;
 
-static char *cheat_msg[13] = {
-	"none",
-	"God Mode",
-	"Fucking Arsenal",
-	"Key Full Ammo",
-	"No Clipping",
-	"Toggle Map",
-	"Invincible with Chainsaw",
-	"Berserker Strength Power-up",
-	"Invincibility Power-up",
-	"Invisibility Power-Up",
-	"Automap Power-up",
-	"Anti-Radiation Suit Power-up",
-	"Light-Amplification Visor Power-up"
-};
-
 // Respond to keyboard input events,
 //  intercept cheats.
 boolean
 ST_Responder (event_t* ev)
 {
   int           i;
-  static int last_cheat_sel = 0;
 
   // Filter automap on/off.
   if (ev->type == ev_keyup
@@ -747,12 +728,6 @@ ST_Responder (event_t* ev)
     }
   }
 
-  // check for PSP specific cheat selection
-  if (psp_cheat_select != last_cheat_sel)
-  {
-    plyr->message = cheat_msg[psp_cheat_select];
-    last_cheat_sel = psp_cheat_select;
-  }
   return false;
 }
 

@@ -39,6 +39,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <math.h>
 
 #include <pspsdk.h>
 #include <psputility_netmodules.h>
@@ -70,6 +72,7 @@ int pspDveMgrSetVideoOut(int, int, int, int, int, int, int);
 int VERSION = 110;
 
 char psp_home[256];
+char psp_exe_path[256];
 
 int psp_net_available = 0;
 char *psp_net_ipaddr = 0;
@@ -177,9 +180,27 @@ static void ResetGu(void)
 	sceGuDisplay(GU_TRUE);
 }
 
+// confirm/cancel buttons follow the system setting (O confirms on
+// Japanese firmware, and CFW can swap it)
+u32 psp_btn_ok = PSP_CTRL_CROSS;
+u32 psp_btn_back = PSP_CTRL_CIRCLE;
+int psp_btn_swap = 1; // PSP_SYSTEMPARAM_ID_INT_BUTTON_SWAP: 1 = X confirms, 0 = O confirms
+
+void psp_read_button_swap(void)
+{
+	int val;
+
+	if (sceUtilityGetSystemParamInt(PSP_SYSTEMPARAM_ID_INT_BUTTON_SWAP, &val) != PSP_SYSTEMPARAM_RETVAL_OK)
+		return; // keep X-confirm defaults
+	psp_btn_swap = val ? 1 : 0;
+	psp_btn_ok = val ? PSP_CTRL_CROSS : PSP_CTRL_CIRCLE;
+	psp_btn_back = val ? PSP_CTRL_CIRCLE : PSP_CTRL_CROSS;
+}
+
 int get_text_osk(char *input, unsigned short *intext, unsigned short *desc)
 {
 	int done=0;
+	int shutdown=0;
 	unsigned short outtext[128] = { 0 }; // text after input
 
 	SetupGu();
@@ -201,7 +222,7 @@ int get_text_osk(char *input, unsigned short *intext, unsigned short *desc)
 	// dialog language: 0=Japanese, 1=English, 2=French, 3=Spanish, 4=German,
 	// 5=Italian, 6=Dutch, 7=Portuguese, 8=Russian, 9=Korean, 10-11=Chinese, 12+=default
 	osk.base.language = 1;
-	osk.base.buttonSwap = 1;		// X button: 1
+	osk.base.buttonSwap = psp_btn_swap;	// match system X/O setting
 	osk.base.graphicsThread = 17;	// gfx thread pri
 	osk.base.accessThread = 19;			// unknown thread pri (?)
 	osk.base.fontThread = 18;
@@ -233,14 +254,27 @@ int get_text_osk(char *input, unsigned short *intext, unsigned short *desc)
 			sceUtilityOskUpdate(2); // 2 is taken from ps2dev.org recommendation
 			break;
 			case PSP_UTILITY_DIALOG_QUIT :
-			sceUtilityOskShutdownStart();
+			if (!shutdown)
+			{
+				sceUtilityOskShutdownStart();
+				shutdown = 1;
+			}
 			break;
 			case PSP_UTILITY_DIALOG_FINISHED :
 			done = 1;
 			break;
 			case PSP_UTILITY_DIALOG_NONE :
+			// some firmwares go QUIT -> NONE without us seeing FINISHED
+			if (shutdown)
+				done = 1;
+			break;
 			default :
 			break;
+		}
+		if (quit_requested)
+		{
+			// HOME -> Quit while the OSK is up
+			sceKernelExitGame();
 		}
 
 		for(i = 0; data.outtext[i]; i++)
@@ -306,7 +340,7 @@ void gui_PrePrint(void)
 		sceGumMatrixMode(GU_MODEL);
 		sceGumLoadIdentity();
 
-		sceGuClearColor(0xFF7F7F7F);
+		sceGuClearColor(0xFF000000);
 		sceGuClearDepth(0);
 		sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);
 	}
@@ -359,6 +393,49 @@ void gui_Print(char *text, u32 fc, u32 bc, int x, int y)
 		pspDebugScreenSetXY(x/7, y/8);
 		pspDebugScreenPrintf("%s", text);
 	}
+}
+
+// XMB-style highlight: translucent white bar behind the selected row,
+// fading out at both ends and slowly pulsing
+void gui_Highlight(int x0, int x1, int y)
+{
+	struct HlVertex { u32 color; short x, y, z; } *v;
+	u32 a, c0, c1;
+	int xs[4], k;
+	float ph;
+
+	if (!psp_use_intrafont)
+		return;
+
+	if (x0 < 0) x0 = 0;
+	if (x1 > 480) x1 = 480;
+	if (x1 - x0 < 96)
+		return;
+
+	ph = (float)(sceKernelGetSystemTimeLow() % 1600000) / 1600000.0f;
+	a = 0x38 + (u32)(0x28 * (1.0f + sinf(ph * 2.0f * 3.14159265f)) * 0.5f);
+	c0 = 0x00FFFFFF;
+	c1 = (a << 24) | 0x00FFFFFF;
+
+	xs[0] = x0; xs[1] = x0 + 48; xs[2] = x1 - 48; xs[3] = x1;
+
+	v = sceGuGetMemory(8 * sizeof(struct HlVertex));
+	for (k = 0; k < 4; k++)
+	{
+		u32 c = (k == 1 || k == 2) ? c1 : c0;
+		v[k*2].color = c;   v[k*2].x = xs[k];   v[k*2].y = y - 12; v[k*2].z = 0;
+		v[k*2+1].color = c; v[k*2+1].x = xs[k]; v[k*2+1].y = y + 5; v[k*2+1].z = 0;
+	}
+
+	sceGuDisable(GU_TEXTURE_2D);
+	sceGuDisable(GU_DEPTH_TEST);
+	sceGuDisable(GU_CULL_FACE); // strip winding would otherwise be culled
+	sceGuEnable(GU_BLEND);      // SetupGu (OSK path) leaves blending off
+	sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+	sceGuShadeModel(GU_SMOOTH);
+	sceGuDrawArray(GU_TRIANGLE_STRIP, GU_COLOR_8888|GU_VERTEX_16BIT|GU_TRANSFORM_2D, 8, 0, v);
+	sceGuEnable(GU_CULL_FACE);
+	sceGuEnable(GU_DEPTH_TEST);
 }
 
 char *RequestString (char *initialStr)
@@ -448,7 +525,6 @@ int psp_snd_upd = 0;
 int psp_sfx_enabled = 1;
 int psp_music_enabled = 1;
 
-int psp_stick_disabled = 0;
 int psp_stick_cx = 128;
 int psp_stick_cy = 128;
 int psp_stick_minx = 0;
@@ -458,6 +534,9 @@ int psp_stick_maxy = 255;
 int psp_ctrl_cheat1= 0;
 int psp_ctrl_cheat2= 0;
 int psp_ctrl_cheat3= 0;
+int psp_ctrl_cheat4= 0;
+int psp_ctrl_swapmove = 0;
+int psp_ctrl_swapturn = 0;
 
 char *psp_iwad_file = 0;
 char *psp_pwad_file1 = 0;
@@ -515,6 +594,12 @@ int gui_menu_len(struct gui_menu *menu)
 	return c;
 }
 
+static int gui_skip_row(struct gui_menu *item)
+{
+	int type = item->flags & 0x0FFFFFFF;
+	return type == GUI_DIVIDER || (type == GUI_TEXT && item->enable != GUI_ENABLED);
+}
+
 int gui_list_len(struct gui_list *list)
 {
 	int c = 0;
@@ -523,18 +608,39 @@ int gui_list_len(struct gui_list *list)
 	return c;
 }
 
-void do_gui(struct gui_menu *menu, void *menufn, char *exit_msg)
+static int gui_start_requested = 0;
+
+void psp_save_config(void *arg);
+
+void psp_gui_start(void *arg)
+{
+	gui_start_requested = 1;
+}
+
+void do_gui(struct gui_menu *menu, void *menufn, int toplevel)
 {
 	SceCtrlData pad;
+	u32 prev_buttons;
 	int msy, mlen;
 	int i, j, k, min, max;
 	int csel = 0;
 	u32 fc, bc;
 	int tx, ty;
-	char line[69];
+	char line[256];
 
 	mlen = gui_menu_len(menu);
 	msy = 136 - mlen*8;
+	// keep the last row clear of the two hint lines at the bottom
+	if (msy + (mlen - 1) * 16 > 234)
+		msy = 234 - (mlen - 1) * 16;
+
+	// start on the first selectable row (on "Start" in the top menu)
+	for (i = 0; i < mlen && gui_skip_row(&menu[i]); i++);
+	csel = (i < mlen) ? i : 0;
+	if (toplevel)
+		for (i = 0; i < mlen; i++)
+			if (menu[i].field1 == (void *)&psp_gui_start)
+				csel = i;
 
 	pspDebugScreenInit();
 	pspDebugScreenSetBackColor(0xFF000000);
@@ -542,13 +648,15 @@ void do_gui(struct gui_menu *menu, void *menufn, char *exit_msg)
 	pspDebugScreenClear();
 
 	sceCtrlReadBufferPositive(&pad, 1);
-	while (!(pad.Buttons & PSP_CTRL_CIRCLE))
+	prev_buttons = pad.Buttons;
+	// O backs out of sub-menus only; the game is started with Start/START
+	while (!gui_start_requested && (toplevel || !(pad.Buttons & psp_btn_back)))
 	{
 		void (*fnptr)(struct gui_menu *);
 		fnptr = menufn;
 		if (fnptr)
 			(*fnptr)(menu);
-		if (pad.Buttons & PSP_CTRL_CROSS)
+		if (pad.Buttons & psp_btn_ok)
 		{
 			if (menu[csel].enable == GUI_ENABLED)
 				switch (menu[csel].flags & 0x0FFFFFFF)
@@ -558,18 +666,18 @@ void do_gui(struct gui_menu *menu, void *menufn, char *exit_msg)
 					char *req;
 
 					case GUI_MENU:
-					while (pad.Buttons & PSP_CTRL_CROSS)
+					while (pad.Buttons & psp_btn_ok)
 						sceCtrlReadBufferPositive(&pad, 1);
-					do_gui((struct gui_menu *)menu[csel].field1, menu[csel].field2, "Return to Prev Menu");
+					do_gui((struct gui_menu *)menu[csel].field1, menu[csel].field2, 0);
 					break;
 					case GUI_FUNCTION:
-					while (pad.Buttons & PSP_CTRL_CROSS)
+					while (pad.Buttons & psp_btn_ok)
 						sceCtrlReadBufferPositive(&pad, 1);
 					fnptr = menu[csel].field1;
 					(*fnptr)(menu[csel].field2);
 					break;
 					case GUI_TOGGLE:
-					while (pad.Buttons & PSP_CTRL_CROSS)
+					while (pad.Buttons & psp_btn_ok)
 						sceCtrlReadBufferPositive(&pad, 1);
 					*(int *)menu[csel].field1 ^= 1;
 					break;
@@ -596,18 +704,22 @@ void do_gui(struct gui_menu *menu, void *menufn, char *exit_msg)
 					}
 					break;
 					case GUI_FILE:
-					while (pad.Buttons & PSP_CTRL_CROSS)
+					while (pad.Buttons & psp_btn_ok)
 						sceCtrlReadBufferPositive(&pad, 1);
-					if (*(int *)menu[csel].field1)
-						free(*(char **)menu[csel].field1);
 					strcpy(temp, psp_home);
 					strcat(temp, (char *)menu[csel].field2);
 					strcat(temp, "/");
 					req = RequestFile(temp);
-					*(char **)menu[csel].field1 = req ? strdup(req) : 0;
+					// cancel clears patch WAD/DEH slots, but keeps the main WAD
+					if (req || strcmp((char *)menu[csel].field2, "iwad"))
+					{
+						if (*(int *)menu[csel].field1)
+							free(*(char **)menu[csel].field1);
+						*(char **)menu[csel].field1 = req ? strdup(req) : 0;
+					}
 					break;
 					case GUI_STRING:
-					while (pad.Buttons & PSP_CTRL_CROSS)
+					while (pad.Buttons & psp_btn_ok)
 						sceCtrlReadBufferPositive(&pad, 1);
 					temp[0] = 0;
 					if (*(int *)menu[csel].field1)
@@ -672,6 +784,10 @@ void do_gui(struct gui_menu *menu, void *menufn, char *exit_msg)
 					}
 					break;
 				}
+			// functions/sub-menus may leave buttons held (e.g. START confirms
+			// the OSK), so only count presses made after they return
+			sceCtrlReadBufferPositive(&pad, 1);
+			prev_buttons = pad.Buttons;
 		}
 		else
 		{
@@ -679,53 +795,95 @@ void do_gui(struct gui_menu *menu, void *menufn, char *exit_msg)
 			{
 				while (pad.Buttons & PSP_CTRL_UP)
 					sceCtrlReadBufferPositive(&pad, 1);
-				csel = (csel == 0) ? mlen - 1 : csel - 1;
+				i = 0;
+				do
+					csel = (csel == 0) ? mlen - 1 : csel - 1;
+				while (gui_skip_row(&menu[csel]) && ++i < mlen);
 			}
 			if (pad.Buttons & PSP_CTRL_DOWN)
 			{
 				while (pad.Buttons & PSP_CTRL_DOWN)
 					sceCtrlReadBufferPositive(&pad, 1);
-				csel = (csel == (mlen - 1)) ? 0 : csel + 1;
+				i = 0;
+				do
+					csel = (csel == (mlen - 1)) ? 0 : csel + 1;
+				while (gui_skip_row(&menu[csel]) && ++i < mlen);
+			}
+			if ((pad.Buttons & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT)) && menu[csel].enable == GUI_ENABLED)
+			{
+				int dir = (pad.Buttons & PSP_CTRL_RIGHT) ? 1 : -1;
+
+				switch (menu[csel].flags & 0x0FFFFFFF)
+				{
+					case GUI_TOGGLE:
+					while (pad.Buttons & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT))
+						sceCtrlReadBufferPositive(&pad, 1);
+					*(int *)menu[csel].field1 ^= 1;
+					break;
+					case GUI_SELECT:
+					while (pad.Buttons & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT))
+						sceCtrlReadBufferPositive(&pad, 1);
+					j = gui_list_len((struct gui_list *)menu[csel].field1);
+					k = *(int *)menu[csel].field2 + dir;
+					if (k < 0)
+						k = j - 1;
+					else if (k >= j)
+						k = 0;
+					*(int *)menu[csel].field2 = k;
+					break;
+					case GUI_INTEGER:
+					if (menu[csel].field2)
+					{
+						int *rng = (int *)menu[csel].field2;
+						min = rng[0];
+						max = rng[1];
+					}
+					else
+					{
+						min = (int)0x80000000;
+						max = 0x7FFFFFFF;
+					}
+					// held d-pad auto-repeats
+					sceKernelDelayThread(200*1000);
+					*(int *)menu[csel].field1 += dir;
+					if (*(int *)menu[csel].field1 > max)
+						*(int *)menu[csel].field1 = max;
+					if (*(int *)menu[csel].field1 < min)
+						*(int *)menu[csel].field1 = min;
+					break;
+				}
 			}
 		}
 
 		sceDisplayWaitVblankStart();
 		gui_PrePrint();
 		fc = 0xFFFFFFFF;
-		bc = 0xFF000000;
+		bc = 0x00000000;
 
 		switch (menu[csel].flags & 0x0FFFFFFF)
 		{
-			case GUI_MENU:
-			gui_Print("X = Enter Sub-Menu", fc, bc, 14, 264);
-			break;
-			case GUI_FUNCTION:
-			gui_Print("X = Do Function", fc, bc, 14, 264);
-			break;
 			case GUI_SELECT:
-			gui_Print("X = Hold to change Selection with D-Pad", fc, bc, 14, 264);
-			break;
 			case GUI_TOGGLE:
-			gui_Print("X = Toggle Flag", fc, bc, 14, 264);
-			break;
 			case GUI_INTEGER:
-			gui_Print("X = Hold to change Integer with D-Pad", fc, bc, 14, 264);
-			break;
-			case GUI_FILE:
-			gui_Print("X = Select File", fc, bc, 14, 264);
-			break;
-			case GUI_STRING:
-			gui_Print("X = Input String", fc, bc, 14, 264);
+			if (menu[csel].enable == GUI_ENABLED)
+			{
+				gui_Print("Left/Right = Change Value", fc, bc, 14, 264);
+				break;
+			}
+			// fall through
+			default:
+			gui_Print("START = Start DOOM", fc, bc, 14, 264);
 			break;
 		}
-		sprintf(line, "O = %s", exit_msg);
+		gui_Print("SELECT = Save Config", fc, bc, 14, 248);
+		strcpy(line, psp_btn_swap ? "X/O = Enter/Back" : "O/X = Enter/Back");
 		gui_Print(line, fc, bc, 466 - gui_PrintWidth(line), 264);
 
 		for (i=0; i<mlen; i++)
 		{
 			char temp[10];
 
-			bc = 0xFF000000;
+			bc = 0x00000000;
 			if ((menu[i].flags & 0x0FFFFFFF) == GUI_DIVIDER)
 				continue;
 			if (menu[i].enable == GUI_ENABLED)
@@ -733,7 +891,7 @@ void do_gui(struct gui_menu *menu, void *menufn, char *exit_msg)
 			else
 				fc = 0xFFAAAAAA;
 
-			strcpy(line, menu[i].text);
+			snprintf(line, sizeof(line), "%s", menu[i].text);
 			switch (menu[i].flags & 0x0FFFFFFF)
 			{
 				case GUI_SELECT:
@@ -750,12 +908,15 @@ void do_gui(struct gui_menu *menu, void *menufn, char *exit_msg)
 				strcat(line, temp);
 				break;
 				case GUI_FILE:
-				strcat(line, " : ");
-				strcat(line, *(int *)menu[i].field1 ? *(char **)menu[i].field1 : "");
+				if (menu[i].text[0])
+					strcat(line, " : ");
+				else if (!*(int *)menu[i].field1)
+					strcat(line, "(none)"); // unlabeled path row
+				strncat(line, *(int *)menu[i].field1 ? *(char **)menu[i].field1 : "", sizeof(line) - strlen(line) - 1);
 				break;
 				case GUI_STRING:
 				strcat(line, " : ");
-				strcat(line, *(int *)menu[i].field1 ? *(char **)menu[i].field1 : "");
+				strncat(line, *(int *)menu[i].field1 ? *(char **)menu[i].field1 : "", sizeof(line) - strlen(line) - 1);
 				break;
 				case GUI_TEXT:
 				if ((int)menu[i].field1)
@@ -779,20 +940,41 @@ void do_gui(struct gui_menu *menu, void *menufn, char *exit_msg)
 				tx = 240 - gui_PrintWidth(line) / 2;
 				ty = msy + i * 16;
 			}
+			if (i == csel)
+				gui_Highlight(tx - 60, tx + gui_PrintWidth(line) + 60, ty);
 			gui_Print(line, fc, bc, tx, ty);
-			bc = 0xFF000000;
+			bc = 0x00000000;
 		}
 		gui_PostPrint();
 
 		sceKernelDelayThread(20*1000);
 		sceCtrlReadBufferPositive(&pad, 1);
+		if ((pad.Buttons & PSP_CTRL_START) && !(prev_buttons & PSP_CTRL_START))
+		{
+			// START launches the game from any menu level
+			while (pad.Buttons & PSP_CTRL_START)
+				sceCtrlReadBufferPositive(&pad, 1);
+			gui_start_requested = 1;
+		}
+		if ((pad.Buttons & PSP_CTRL_SELECT) && !(prev_buttons & PSP_CTRL_SELECT))
+		{
+			// SELECT saves config from any menu level
+			while (pad.Buttons & PSP_CTRL_SELECT)
+				sceCtrlReadBufferPositive(&pad, 1);
+			psp_save_config(0);
+			// buttons used to close the OSK (START, X/O) must not act here
+			do
+				sceCtrlReadBufferPositive(&pad, 1);
+			while (pad.Buttons & (psp_btn_ok | psp_btn_back));
+		}
+		prev_buttons = pad.Buttons;
 		if (quit_requested)
 		{
 			sceKernelDelayThread(5*1000*1000);
 			sceKernelExitGame();
 		}
 	}
-	while (pad.Buttons & PSP_CTRL_CIRCLE)
+	while (pad.Buttons & psp_btn_back)
 		sceCtrlReadBufferPositive(&pad, 1);
 
 	pspDebugScreenInit();
@@ -803,18 +985,29 @@ void do_gui(struct gui_menu *menu, void *menufn, char *exit_msg)
 
 void set_myargv(void);
 void get_myargv(void);
+static int psp_file_exists(const char *path);
+
+char psp_cfg_status[300] = "(none)"; // path of current config file
 
 void psp_load_defaults()
 {
+	static const char *cfgnames[] = { "config/default.cfg", "default.set", "doom.set" };
 	int i;
-	FILE *handle;
+	FILE *handle = NULL;
 	char temp[256];
 
-	strcpy(temp, psp_home);
-	strcat(temp, "doom.set");
-	handle = fopen (temp, "r");
+	// try config/default.cfg first, fall back to legacy default.set/doom.set;
+	// each in the launch dir, then relative to the current dir
+	for (i = 0; i < 6 && handle == NULL; i++)
+	{
+		strcpy(temp, (i & 1) ? "" : psp_home);
+		strcat(temp, cfgnames[i >> 1]);
+		handle = fopen (temp, "r");
+	}
 	if (handle == NULL)
 		return;
+
+	snprintf(psp_cfg_status, sizeof(psp_cfg_status), "%s", temp);
 
 	for (i = 0 ; i < MAXARGVS; i++)
 	{
@@ -833,12 +1026,14 @@ void psp_load_defaults()
 	get_myargv();
 }
 
-void psp_load_settings(void *arg)
+void psp_load_config(void *arg)
 {
 	int i;
 	char *req;
+	char dir[256];
 
-	req = RequestFile(psp_home);
+	snprintf(dir, sizeof(dir), "%sconfig/", psp_home);
+	req = RequestFile(dir);
 
 	pspDebugScreenInit();
 	pspDebugScreenSetBackColor(0xFF000000);
@@ -859,7 +1054,7 @@ void psp_load_settings(void *arg)
 		FILE *handle;
 		char temp[256];
 
-		printf("Attempting to load settings from %s\n\n", req);
+		printf("Attempting to load config from %s\n\n", req);
 
 		handle = fopen (req, "r");
 		if (handle == NULL)
@@ -884,8 +1079,9 @@ void psp_load_settings(void *arg)
 		fclose (handle);
 
 		get_myargv();
+		snprintf(psp_cfg_status, sizeof(psp_cfg_status), "%s", req);
 
-		printf("\nSettings loaded\n\n");
+		printf("\nConfig loaded\n\n");
 		sceKernelDelayThread(3*1000*1000);
 	}
 	else
@@ -896,11 +1092,11 @@ void psp_load_settings(void *arg)
 	pspDebugScreenClear();
 }
 
-void psp_save_settings(void *arg)
+void psp_save_config(void *arg)
 {
 	int ok, i;
 	char filename[64];
-	unsigned short intext[128]  = { 'd', 'o', 'o', 'm', '.', 's', 'e', 't', 0 }; // text already in the edit box on start
+	unsigned short intext[128]  = { 'd', 'e', 'f', 'a', 'u', 'l', 't', '.', 'c', 'f', 'g', 0 }; // text already in the edit box on start
 	unsigned short desc[128]	= { 'E', 'n', 't', 'e', 'r', ' ', 'F', 'i', 'l', 'e', ' ', 'N', 'a', 'm', 'e', 0 }; // description
 
 	ok = get_text_osk(filename, intext, desc);
@@ -915,10 +1111,12 @@ void psp_save_settings(void *arg)
 		FILE *handle;
 		char temp[256];
 
-		printf("Attempting to save settings to %s%s\n\n", psp_home, filename);
+		// no extension given: add .cfg
+		snprintf(temp, sizeof(temp), "%sconfig/%s%s", psp_home, filename,
+			strchr(filename, '.') ? "" : ".cfg");
 
-		strcpy(temp, psp_home);
-		strcat(temp, filename);
+		printf("Attempting to save config to %s\n\n", temp);
+
 		handle = fopen (temp, "wb");
 		if (handle == NULL)
 		{
@@ -936,7 +1134,8 @@ void psp_save_settings(void *arg)
 
 		fclose (handle);
 
-		printf("Settings saved to %s\n\n", temp);
+		snprintf(psp_cfg_status, sizeof(psp_cfg_status), "%s", temp);
+		printf("Config saved to %s\n\n", temp);
 		sceKernelDelayThread(2*1000*1000);
 	}
 	else
@@ -1170,8 +1369,8 @@ void InfraFunc(struct gui_menu *menu)
 void psp_gui(void)
 {
 	struct gui_menu AboutLevel[] = {
-		{ "Doom for the PSP", GUI_CENTER | GUI_TEXT, (void *)0xFFFFFF, (void *)0x1020FF, GUI_DISABLED },
-		{ "by Chilly Willy", GUI_CENTER | GUI_TEXT, (void *)0xFFFFFF, (void *)0x1020FF, GUI_DISABLED },
+		{ "Doom for the PSP", GUI_CENTER | GUI_TEXT, (void *)0xFFFFFF, 0, GUI_DISABLED },
+		{ "by Chilly Willy", GUI_CENTER | GUI_TEXT, (void *)0xFFFFFF, 0, GUI_DISABLED },
 		{ "based on ADoomPPC v1.7 by Jarmo Laakkonen", GUI_CENTER | GUI_TEXT, (void *)0x88FF88, 0, GUI_DISABLED },
 		{ "based on ADoomPPC v1.3 by Joseph Fenton", GUI_CENTER | GUI_TEXT, (void *)0x88FF88, 0, GUI_DISABLED },
 		{ "based on ADoom v1.2 by Peter McGavin", GUI_CENTER | GUI_TEXT, (void *)0x88FF88, 0, GUI_DISABLED },
@@ -1181,7 +1380,9 @@ void psp_gui(void)
 		{ "and the original MIDI Instruments by Joseph Fenton", GUI_CENTER | GUI_TEXT, (void *)0x8888FF, 0, GUI_DISABLED },
 		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
 		{ "Uses intraFont by BenHur", GUI_CENTER | GUI_TEXT, (void *)0xFF8888, 0, GUI_DISABLED },
-		{ "TV-out support lib thanks to Dark_AleX", GUI_CENTER | GUI_TEXT, (void *)0x010101, (void *)0xFFFFFF, GUI_DISABLED },
+		{ "TV-out support lib thanks to Dark_AleX", GUI_CENTER | GUI_TEXT, (void *)0xFFFFFF, 0, GUI_DISABLED },
+		{ "Sleep, launcher and control improvements by Subnixr", GUI_CENTER | GUI_TEXT, (void *)0xFFFFFF, 0, GUI_DISABLED },
+        { "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
 
@@ -1284,12 +1485,27 @@ void psp_gui(void)
 		{ 0, GUI_END_OF_LIST }
 	};
 
+	struct gui_list ctrl_move_list[] = {
+		{ "Analog", 0 },
+		{ "DPad", 1 },
+		{ 0, GUI_END_OF_LIST }
+	};
+
+	struct gui_list ctrl_lr_list[] = {
+		{ "Turn", 0 },
+		{ "Strafe", 1 },
+		{ 0, GUI_END_OF_LIST }
+	};
+
 	struct gui_menu ControlLevel[] = {
-		{ "Disable Analog Stick", GUI_CENTER | GUI_TOGGLE, &psp_stick_disabled, 0, GUI_ENABLED },
 		{ "Calibrate Analog Stick", GUI_CENTER | GUI_FUNCTION, &psp_stick_calibrate, 0, GUI_ENABLED },
-		{ "TRIANGLE + CIRCLE Cheat", GUI_CENTER | GUI_SELECT, &ctrl_cheat_list, &psp_ctrl_cheat1, GUI_ENABLED },
-		{ "TRIANGLE + CROSS Cheat", GUI_CENTER | GUI_SELECT, &ctrl_cheat_list, &psp_ctrl_cheat2, GUI_ENABLED },
-		{ "TRIANGLE + SQUARE Cheat", GUI_CENTER | GUI_SELECT, &ctrl_cheat_list, &psp_ctrl_cheat3, GUI_ENABLED },
+		{ "Movement", GUI_CENTER | GUI_SELECT, &ctrl_move_list, &psp_ctrl_swapmove, GUI_ENABLED },
+		{ "L/R", GUI_CENTER | GUI_SELECT, &ctrl_lr_list, &psp_ctrl_swapturn, GUI_ENABLED },
+		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
+		{ "SELECT + SQUARE Cheat", GUI_CENTER | GUI_SELECT, &ctrl_cheat_list, &psp_ctrl_cheat3, GUI_ENABLED },
+		{ "SELECT + TRIANGLE Cheat", GUI_CENTER | GUI_SELECT, &ctrl_cheat_list, &psp_ctrl_cheat4, GUI_ENABLED },
+		{ "SELECT + CIRCLE Cheat", GUI_CENTER | GUI_SELECT, &ctrl_cheat_list, &psp_ctrl_cheat1, GUI_ENABLED },
+		{ "SELECT + CROSS Cheat", GUI_CENTER | GUI_SELECT, &ctrl_cheat_list, &psp_ctrl_cheat2, GUI_ENABLED },
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
 
@@ -1366,8 +1582,8 @@ void psp_gui(void)
 	};
 
 	struct gui_menu VideoLevel[] = {
-		{ "LCD Settings", GUI_CENTER | GUI_MENU, LcdLevel, 0, GUI_ENABLED },
-		{ "TV Settings", GUI_CENTER | GUI_MENU, TvLevel, 0, GUI_SET_ME },
+		{ "LCD", GUI_CENTER | GUI_MENU, LcdLevel, 0, GUI_ENABLED },
+		{ "TV", GUI_CENTER | GUI_MENU, TvLevel, 0, GUI_SET_ME },
 		{ "Display", GUI_CENTER | GUI_SELECT, &psp_display_list, &psp_use_tv, GUI_SET_ME },
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
@@ -1387,16 +1603,28 @@ void psp_gui(void)
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
 
+	struct gui_menu EditLevel[] = {
+		{ "CPU", GUI_CENTER | GUI_MENU, CpuLevel, 0, GUI_ENABLED },
+		{ "Video", GUI_CENTER | GUI_MENU, VideoLevel, 0, GUI_ENABLED },
+		{ "Sound", GUI_CENTER | GUI_MENU, SoundLevel, 0, GUI_ENABLED },
+		{ "Controller", GUI_CENTER | GUI_MENU, ControlLevel, 0, GUI_ENABLED },
+		{ "File", GUI_CENTER | GUI_MENU, FileLevel, 0, GUI_ENABLED },
+		{ "Game", GUI_CENTER | GUI_MENU, GameLevel, 0, GUI_ENABLED },
+		{ "Network", GUI_CENTER | GUI_MENU, NetLevel, 0, GUI_ENABLED },
+		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
+	};
+
 	struct gui_menu TopLevel[] = {
-		{ "Load Settings", GUI_CENTER | GUI_FUNCTION, &psp_load_settings, 0, GUI_ENABLED },
-		{ "Save Settings", GUI_CENTER | GUI_FUNCTION, &psp_save_settings, 0, GUI_ENABLED },
-		{ "CPU Settings", GUI_CENTER |GUI_MENU, CpuLevel, 0, GUI_ENABLED },
-		{ "Video Settings", GUI_CENTER | GUI_MENU, VideoLevel, 0, GUI_ENABLED },
-		{ "Sound Settings", GUI_CENTER | GUI_MENU, SoundLevel, 0, GUI_ENABLED },
-		{ "Controller Settings", GUI_CENTER | GUI_MENU, ControlLevel, 0, GUI_ENABLED },
-		{ "File Settings", GUI_CENTER | GUI_MENU, FileLevel, 0, GUI_ENABLED },
-		{ "Game Settings", GUI_CENTER | GUI_MENU, GameLevel, 0, GUI_ENABLED },
-		{ "Network Settings", GUI_CENTER |GUI_MENU, NetLevel, 0, GUI_ENABLED },
+		{ "Start", GUI_CENTER | GUI_FUNCTION, &psp_gui_start, 0, GUI_ENABLED },
+		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
+		{ "Main WAD:", GUI_CENTER | GUI_TEXT, 0, 0, GUI_DISABLED },
+		{ "", GUI_CENTER | GUI_FILE, &psp_iwad_file, "iwad", GUI_ENABLED },
+		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
+		{ "Config:", GUI_CENTER | GUI_TEXT, 0, 0, GUI_DISABLED },
+		{ psp_cfg_status, GUI_CENTER | GUI_FUNCTION, &psp_load_config, 0, GUI_ENABLED },
+		{ "Configure", GUI_CENTER | GUI_MENU, EditLevel, 0, GUI_ENABLED },
+		{ "Save", GUI_CENTER | GUI_FUNCTION, &psp_save_config, 0, GUI_ENABLED },
+		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
 		{ "About", GUI_CENTER | GUI_MENU, AboutLevel, 0, GUI_ENABLED },
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
@@ -1416,7 +1644,7 @@ void psp_gui(void)
 	if (temp)
 		fclose(temp);
 
-	do_gui(TopLevel, (void *)0, "Start DOOM");
+	do_gui(TopLevel, (void *)0, 1);
 
 	// now set the arg list
 	set_myargv();
@@ -1705,14 +1933,30 @@ int main (int argc, char **argv)
 	sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 
 	SetupCallbacks();
+	psp_read_button_swap();
+
+	// remember our EBOOT path so I_Quit can relaunch into the GUI
+	strncpy(psp_exe_path,(argc > 0 && argv[0]) ? argv[0] : "",sizeof(psp_exe_path)-1);
+	psp_exe_path[sizeof(psp_exe_path)-1] = 0;
 
 	// get launch directory name for our home
-	strncpy(psp_home,argv[0],sizeof(psp_home)-1);
+	strncpy(psp_home,(argc > 0 && argv[0]) ? argv[0] : "",sizeof(psp_home)-1);
 	psp_home[sizeof(psp_home)-1] = 0;
 	char *str_ptr=strrchr(psp_home,'/');
 	if (str_ptr){
 		str_ptr++;
 		*str_ptr = 0;
+	}
+	else
+		psp_home[0] = 0; // no dir in argv[0], use current dir
+
+	// user data dirs, created on first run
+	{
+		char dir[256];
+		snprintf(dir, sizeof(dir), "%sconfig", psp_home);
+		mkdir(dir, 0777);
+		snprintf(dir, sizeof(dir), "%ssaves", psp_home);
+		mkdir(dir, 0777);
 	}
 
 	if (sceKernelDevkitVersion() >= 0x03070110)
@@ -1740,27 +1984,17 @@ int main (int argc, char **argv)
 
 	if (!psp_iwad_file)
 	{
+		// no (valid) IWAD in config: pick first one found in <home>iwad/,
+		// full versions before shareware
+		static const char *iwads[] = { "doom2.wad", "plutonia.wad", "tnt.wad",
+			"doomu.wad", "doom.wad", "doom1.wad", "DOOM1.WAD", 0 };
 		char temp[256];
-		FILE *hnd;
 
-		strcpy(temp, psp_home);
-		strcat(temp, "iwad/doom1.wad");
-		hnd = fopen(temp, "rb");
-		if (hnd)
+		for (i = 0; iwads[i] && !psp_iwad_file; i++)
 		{
-			fclose(hnd);
-			psp_iwad_file = strdup(temp);
-		}
-		else
-		{
-			strcpy(temp, psp_home);
-			strcat(temp, "iwad/DOOM1.WAD");
-			hnd = fopen(temp, "rb");
-			if (hnd)
-			{
-				fclose(hnd);
+			snprintf(temp, sizeof(temp), "%siwad/%s", psp_home, iwads[i]);
+			if (psp_file_exists(temp))
 				psp_iwad_file = strdup(temp);
-			}
 		}
 	}
 
@@ -2203,44 +2437,36 @@ void set_myargv(void)
 		}
 	}
 
-	if (psp_stick_disabled)
-	{
-		myargv[myargc] = strdup("-noanalog");
-		myargc++;
-	}
-	else
-	{
-		myargv[myargc] = strdup("-analogcx");
-		myargc++;
-		sprintf(temp, "%d", psp_stick_cx);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-		myargv[myargc] = strdup("-analogcy");
-		myargc++;
-		sprintf(temp, "%d", psp_stick_cy);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-		myargv[myargc] = strdup("-analogminx");
-		myargc++;
-		sprintf(temp, "%d", psp_stick_minx);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-		myargv[myargc] = strdup("-analogminy");
-		myargc++;
-		sprintf(temp, "%d", psp_stick_miny);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-		myargv[myargc] = strdup("-analogmaxx");
-		myargc++;
-		sprintf(temp, "%d", psp_stick_maxx);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-		myargv[myargc] = strdup("-analogmaxy");
-		myargc++;
-		sprintf(temp, "%d", psp_stick_maxy);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-	}
+	myargv[myargc] = strdup("-analogcx");
+	myargc++;
+	sprintf(temp, "%d", psp_stick_cx);
+	myargv[myargc] = strdup(temp);
+	myargc++;
+	myargv[myargc] = strdup("-analogcy");
+	myargc++;
+	sprintf(temp, "%d", psp_stick_cy);
+	myargv[myargc] = strdup(temp);
+	myargc++;
+	myargv[myargc] = strdup("-analogminx");
+	myargc++;
+	sprintf(temp, "%d", psp_stick_minx);
+	myargv[myargc] = strdup(temp);
+	myargc++;
+	myargv[myargc] = strdup("-analogminy");
+	myargc++;
+	sprintf(temp, "%d", psp_stick_miny);
+	myargv[myargc] = strdup(temp);
+	myargc++;
+	myargv[myargc] = strdup("-analogmaxx");
+	myargc++;
+	sprintf(temp, "%d", psp_stick_maxx);
+	myargv[myargc] = strdup(temp);
+	myargc++;
+	myargv[myargc] = strdup("-analogmaxy");
+	myargc++;
+	sprintf(temp, "%d", psp_stick_maxy);
+	myargv[myargc] = strdup(temp);
+	myargc++;
 
 	if (psp_ctrl_cheat1)
 	{
@@ -2264,6 +2490,26 @@ void set_myargv(void)
 		myargc++;
 		sprintf(temp, "%d", psp_ctrl_cheat3);
 		myargv[myargc] = strdup(temp);
+		myargc++;
+	}
+	if (psp_ctrl_cheat4)
+	{
+		myargv[myargc] = strdup("-cheat4");
+		myargc++;
+		sprintf(temp, "%d", psp_ctrl_cheat4);
+		myargv[myargc] = strdup(temp);
+		myargc++;
+	}
+
+	if (psp_ctrl_swapmove)
+	{
+		myargv[myargc] = strdup("-swapmove");
+		myargc++;
+	}
+
+	if (psp_ctrl_swapturn)
+	{
+		myargv[myargc] = strdup("-swapturn");
 		myargc++;
 	}
 
@@ -2399,6 +2645,33 @@ int first_argv(char *check)
     return 0;
 }
 
+static int psp_file_exists(const char *path)
+{
+	FILE *hnd = fopen(path, "rb");
+	if (hnd)
+		fclose(hnd);
+	return hnd != NULL;
+}
+
+// Config files store absolute paths, which go stale when the game dir
+// moves (e.g. ms0: <-> ef0:). If a file is missing, look for the same
+// name in <home><subdir>/; if that fails too, drop it.
+static void psp_fix_path(char **file, const char *subdir)
+{
+	char temp[256];
+	char *base;
+
+	if (!*file || psp_file_exists(*file))
+		return;
+
+	base = strrchr(*file, '/');
+	base = base ? base + 1 : *file;
+	snprintf(temp, sizeof(temp), "%s%s/%s", psp_home, subdir, base);
+
+	free(*file);
+	*file = psp_file_exists(temp) ? strdup(temp) : 0;
+}
+
 void get_myargv(void)
 {
 	int i, j;
@@ -2504,6 +2777,7 @@ void get_myargv(void)
 	i = first_argv("-iwad");
 	if (i)
 		psp_iwad_file = strdup(myargv[i+1]);
+	psp_fix_path(&psp_iwad_file, "iwad");
 
 	i = first_argv("-file");
 	if (i)
@@ -2532,10 +2806,19 @@ void get_myargv(void)
 			{
 				psp_deh_file3 = strdup(myargv[i+3]);
 				if ((i+4 < myargc) && myargv[i+4][0] != '-')
-					psp_deh_file4 = strdup(myargv[i+1]);
+					psp_deh_file4 = strdup(myargv[i+4]);
 			}
 		}
 	}
+
+	psp_fix_path(&psp_pwad_file1, "pwad");
+	psp_fix_path(&psp_pwad_file2, "pwad");
+	psp_fix_path(&psp_pwad_file3, "pwad");
+	psp_fix_path(&psp_pwad_file4, "pwad");
+	psp_fix_path(&psp_deh_file1, "deh");
+	psp_fix_path(&psp_deh_file2, "deh");
+	psp_fix_path(&psp_deh_file3, "deh");
+	psp_fix_path(&psp_deh_file4, "deh");
 
 	psp_game_nomonsters = 0;
 	if (first_argv("-nomonsters"))
@@ -2633,37 +2916,30 @@ void get_myargv(void)
 		}
 	}
 
-	psp_stick_disabled = 0;
-	i = first_argv("-noanalog");
+	psp_stick_cx = 128;
+	i = first_argv("-analogcx");
 	if (i)
-		psp_stick_disabled = 1;
-	else
-	{
-		psp_stick_cx = 128;
-		i = first_argv("-analogcx");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_stick_cx);
-		psp_stick_cy = 128;
-		i = first_argv("-analogcy");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_stick_cy);
-		psp_stick_minx = 0;
-		i = first_argv("-analogminx");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_stick_minx);
-		psp_stick_miny = 0;
-		i = first_argv("-analogminy");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_stick_miny);
-		psp_stick_maxx = 255;
-		i = first_argv("-analogmaxx");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_stick_maxx);
-		psp_stick_maxy = 255;
-		i = first_argv("-analogmaxy");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_stick_maxy);
-	}
+		sscanf(myargv[i+1], "%d", &psp_stick_cx);
+	psp_stick_cy = 128;
+	i = first_argv("-analogcy");
+	if (i)
+		sscanf(myargv[i+1], "%d", &psp_stick_cy);
+	psp_stick_minx = 0;
+	i = first_argv("-analogminx");
+	if (i)
+		sscanf(myargv[i+1], "%d", &psp_stick_minx);
+	psp_stick_miny = 0;
+	i = first_argv("-analogminy");
+	if (i)
+		sscanf(myargv[i+1], "%d", &psp_stick_miny);
+	psp_stick_maxx = 255;
+	i = first_argv("-analogmaxx");
+	if (i)
+		sscanf(myargv[i+1], "%d", &psp_stick_maxx);
+	psp_stick_maxy = 255;
+	i = first_argv("-analogmaxy");
+	if (i)
+		sscanf(myargv[i+1], "%d", &psp_stick_maxy);
 
 	psp_ctrl_cheat1 = 0;
 	i = first_argv("-cheat1");
@@ -2677,6 +2953,13 @@ void get_myargv(void)
 	i = first_argv("-cheat3");
 	if (i)
 		sscanf(myargv[i+1], "%d", &psp_ctrl_cheat3);
+	psp_ctrl_cheat4 = 0;
+	i = first_argv("-cheat4");
+	if (i)
+		sscanf(myargv[i+1], "%d", &psp_ctrl_cheat4);
+
+	psp_ctrl_swapmove = first_argv("-swapmove") ? 1 : 0;
+	psp_ctrl_swapturn = first_argv("-swapturn") ? 1 : 0;
 
 	psp_net_enabled = 0;
 	i = first_argv("-net");

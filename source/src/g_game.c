@@ -76,6 +76,8 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
 #include "g_game.h"
 
+extern char psp_home[256];
+
 
 //#define SAVEGAMESIZE  0x2c000
 #define SAVEGAMESIZE    0x50000
@@ -117,6 +119,8 @@ boolean         timingdemo;             // if true, exit with report on completi
 boolean         nodrawers;              // for comparative timing purposes
 boolean         noblit;                 // for comparative timing purposes
 int             starttime;              // for comparative timing purposes
+
+int             psp_weapon_change = wp_nochange; // PSP weapon cycling, consumed by G_BuildTiccmd
 
 boolean         viewactive;
 
@@ -186,6 +190,9 @@ fixed_t         forwardmove[2] = {0x19, 0x32};
 fixed_t         sidemove[2] = {0x18, 0x28};
 fixed_t         angleturn[3] = {640, 1280, 320};        // + slow turn
 
+// PSP: turning 1.5x faster when L/R turn (not strafe)
+#define TURNSPEED(i)    (psp_stickturn ? angleturn[i] : angleturn[i] * 3 / 2)
+
 #define SLOWTURNTICS    6
 
 #define NUMKEYS         256
@@ -197,6 +204,7 @@ boolean         mousearray[4];
 boolean*        mousebuttons = &mousearray[1];          // allow [-1]
 
 // mouse values are used once
+int             psp_stickturn;  // PSP: move stick X turns instead of strafing
 int             mousex;
 int             mousey;
 
@@ -306,13 +314,13 @@ void G_BuildTiccmd (ticcmd_t* cmd)
     else
     {
         if (gamekeydown[key_right])
-            cmd->angleturn -= angleturn[tspeed];
+            cmd->angleturn -= TURNSPEED(tspeed);
         if (gamekeydown[key_left])
-            cmd->angleturn += angleturn[tspeed];
+            cmd->angleturn += TURNSPEED(tspeed);
         if (joyxmove > 0)
-            cmd->angleturn -= angleturn[tspeed];
+            cmd->angleturn -= TURNSPEED(tspeed);
         if (joyxmove < 0)
-            cmd->angleturn += angleturn[tspeed];
+            cmd->angleturn += TURNSPEED(tspeed);
     }
 
     if (gamekeydown[key_up])
@@ -358,6 +366,15 @@ void G_BuildTiccmd (ticcmd_t* cmd)
             cmd->buttons |= i<<BT_WEAPONSHIFT;
             break;
         }
+
+    // PSP next/prev weapon (set by psp_getevents), overrides number keys
+    if (psp_weapon_change != wp_nochange)
+    {
+        cmd->buttons &= ~BT_WEAPONMASK;
+        cmd->buttons |= BT_CHANGE;
+        cmd->buttons |= psp_weapon_change<<BT_WEAPONSHIFT;
+        psp_weapon_change = wp_nochange;
+    }
 
     // mouse
     if (mousebuttons[mousebforward])
@@ -414,11 +431,13 @@ void G_BuildTiccmd (ticcmd_t* cmd)
         }
     }
 
-    forward += mousey;
-    if (strafe)
-        side += mousex*2;
+    // PSP: move stick X strafes (L/R turn), or turns when psp_stickturn
+    // (L/R strafe); full tilt matches the key speed (walk or run)
+    forward += mousey * forwardmove[speed] / 127;
+    if (psp_stickturn)
+        cmd->angleturn -= mousex * TURNSPEED(speed) / 127;
     else
-        cmd->angleturn -= mousex*0x8;
+        side += mousex * sidemove[speed] / 127;
 
     mousex = mousey = 0;
 
@@ -590,8 +609,9 @@ boolean G_Responder (event_t* ev)
         mousebuttons[0] = ev->data1 & 1;
         mousebuttons[1] = ev->data1 & 2;
         mousebuttons[2] = ev->data1 & 4;
-        mousex = ev->data2*(mouseSensitivity+5)/10;
-        mousey = ev->data3*(mouseSensitivity+5)/10;
+        // PSP: analog stick, -127..127, no sensitivity so it matches the DPad
+        mousex = ev->data2;
+        mousey = ev->data3;
         return true;    // eat events
 
       case ev_joystick:
@@ -1283,7 +1303,7 @@ G_SaveGame
 
 void G_DoSaveGame (void)
 {
-    char        name[100];
+    char        name[256];
     char        name2[VERSIONSIZE];
     char*       description;
     int         length;
@@ -1292,7 +1312,7 @@ void G_DoSaveGame (void)
     if (M_CheckParm("-cdrom"))
         sprintf(name,"c:\\doomdata\\"SAVEGAMENAME"%d.dsg",savegameslot);
     else
-        sprintf (name,SAVEGAMENAME"%d.dsg",savegameslot);
+        sprintf (name,"%ssaves/"SAVEGAMENAME"%d.dsg",psp_home,savegameslot);
     description = savedescription;
 
     save_p = savebuffer = screens[1]+0x4000;

@@ -13,6 +13,8 @@
 
 #include "intraFont.h"
 
+extern u32 psp_btn_ok, psp_btn_back; // from psp_main.c
+
 #define printf pspDebugScreenPrintf
 
 
@@ -161,7 +163,7 @@ void ShowFiles( int offset, int selection )
 			strncpy(text, thefiles[i].filename, 68);
 		text[68]=0;
 
-		gui_Print(text, j == (selection-offset) ? 0xFFFFFFFF : 0xFFAAAAAA, 0xFF000000, 240 - gui_PrintWidth(text)/2, (i - offset + 1)*16);
+		gui_Print(text, j == (selection-offset) ? 0xFFFFFFFF : 0xFFAAAAAA, 0, 240 - gui_PrintWidth(text)/2, (i - offset + 1)*16);
 
 		j++;
 	}
@@ -183,7 +185,7 @@ int FileSelector()
 	int redraw = 1;
 	unsigned int p = get_buttons();
 
-	while ( havefile == 0 && !(p & PSP_CTRL_CIRCLE) )
+	while ( havefile == 0 && !(p & psp_btn_back) )
 	{
 		if ( redraw )
 			ShowFiles( offset, selection );
@@ -256,7 +258,7 @@ int FileSelector()
 			redraw = 1;
 		}
 
-		if ( p & PSP_CTRL_CROSS )
+		if ( p & psp_btn_ok )
 		{
 			if ( thefiles[selection].flags )	/*** This is directory ***/
 			{
