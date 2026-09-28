@@ -156,6 +156,62 @@ int I_GetTime (void)
   return snd_ticks;
 }
 
+void I_Yield (void)
+{
+  sceKernelDelayThread(1000);
+}
+
+/**********************************************************************/
+// Sleep handling. The power callback sets psp_suspending; the main
+// thread parks here so it does no rendering or file I/O while the
+// system goes to sleep.
+
+volatile int psp_suspending = 0;
+const char *psp_step = "startup";
+
+extern char psp_home[256];
+
+// Debug log for sleep problems: open/append/close per line so it
+// survives the PSP powering off.
+void psp_sleeplog (const char *fmt, ...)
+{
+  char path[288];
+  char line[256];
+  va_list ap;
+  int n;
+  SceUID fd;
+
+  n = snprintf(line, sizeof(line), "%10u ", (unsigned)sceKernelGetSystemTimeLow());
+  va_start(ap, fmt);
+  n += vsnprintf(line + n, sizeof(line) - n - 1, fmt, ap);
+  va_end(ap);
+  if (n > (int)sizeof(line) - 2)
+    n = sizeof(line) - 2;
+  line[n++] = '\n';
+
+  snprintf(path, sizeof(path), "%slogs", psp_home);
+  sceIoMkdir(path, 0777);
+  snprintf(path, sizeof(path), "%slogs/sleep.log", psp_home);
+  fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+  if (fd < 0)
+    return;
+  sceIoWrite(fd, line, n);
+  sceIoClose(fd);
+}
+
+void psp_wait_resume (void)
+{
+  const char *where;
+
+  if (!psp_suspending)
+    return;
+  where = psp_step;
+  while (psp_suspending)
+    sceKernelDelayThread(10*1000);
+  // logged only now: no file I/O while the system is suspending
+  psp_sleeplog("main: was parked at %s, resumed", where);
+}
+
 /**********************************************************************/
 //
 // Called by D_DoomLoop,
@@ -169,6 +225,8 @@ void I_StartFrame (void)
 {
 	if (quit_requested)
 		I_Error ("User forced quit via Home button\n");
+    psp_wait_resume ();
+    psp_step = "I_StartFrame";
     psp_getevents ();
 }
 

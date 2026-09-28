@@ -56,7 +56,7 @@ typedef struct
 typedef struct
 {
     char	name[8];
-    FILE	*handle;
+    int		handle;		// index into wadfiles[], -1 = reloadable
     int		position;
     int		size;
 } lumpinfo_t;

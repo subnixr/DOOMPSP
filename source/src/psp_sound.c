@@ -529,6 +529,7 @@ int I_StartSound (
   int priority )
 {
 //  fprintf (stderr, "I_StartSound(%d,%d,%d,%d,%d,%d)\n", id, cnum, vol, sep, pitch, priority);
+  psp_step = "I_StartSound";
 
   if (sound_status == 2) {
     I_StopSound(cnum);

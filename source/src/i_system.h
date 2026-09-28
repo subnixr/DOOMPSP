@@ -48,6 +48,16 @@ byte*	I_ZoneBase (int *size);
 // returns current time in tics.
 int I_GetTime (void);
 
+// Give up the CPU briefly while waiting for the next tic. Busy-waiting
+// starves the system threads that put the PSP to sleep.
+void I_Yield (void);
+
+// PSP sleep handling (psp_system.c)
+extern volatile int	psp_suspending;	// set by power callback while asleep
+extern const char	*psp_step;	// main-thread breadcrumb for sleep.log
+void psp_wait_resume (void);		// block while psp_suspending
+void psp_sleeplog (const char *fmt, ...);
+
 
 //
 // Called by D_DoomLoop,

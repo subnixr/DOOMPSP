@@ -79,6 +79,50 @@ int			numlumps;
 
 void**			lumpcache;
 
+// Open WAD files. Kept by path so the handles can be reopened after
+// PSP sleep/resume, which leaves every open file descriptor stale.
+#define MAXWADFILES	32
+typedef struct
+{
+    char	path[256];
+    FILE	*fp;
+} wadfile_t;
+
+static wadfile_t	wadfiles[MAXWADFILES];
+static int		numwadfiles;
+
+extern volatile int	psp_resume_count;	// bumped by power callback
+static int		seen_resume_count;
+
+// Device (ms0:/ef0:) may still be remounting right after resume.
+static FILE *W_OpenRetry (const char *path)
+{
+    FILE	*fp;
+    int		tries;
+
+    for (tries = 0; tries < 30; tries++)
+    {
+	if ( (fp = fopen (path, "r")) != NULL)
+	    return fp;
+	sceKernelDelayThread (100*1000);
+    }
+    return NULL;
+}
+
+static void W_ReopenFiles (void)
+{
+    int		i;
+
+    psp_sleeplog ("W_ReopenFiles: %d files", numwadfiles);
+    for (i = 0; i < numwadfiles; i++)
+    {
+	if (wadfiles[i].fp)
+	    fclose (wadfiles[i].fp);
+	if ( (wadfiles[i].fp = W_OpenRetry (wadfiles[i].path)) == NULL)
+	    I_Error ("W_ReopenFiles: couldn't reopen %s", wadfiles[i].path);
+    }
+}
+
 
 #ifndef PSP
 #if !defined(__SASC)
@@ -187,7 +231,7 @@ void W_AddFile (char *filename)
     int			startlump;
     filelump_t*		fileinfo = NULL;
     filelump_t		singleinfo, *fi;
-    FILE		*storehandle;
+    int			storehandle;
     int                 fileinfo_allocated = 0;
 
     // open the file and add to directory
@@ -256,7 +300,16 @@ void W_AddFile (char *filename)
 
     lump_p = &lumpinfo[startlump];
 
-    storehandle = reloadname ? NULL : handle;
+    storehandle = -1;
+    if (!reloadname)
+    {
+	if (numwadfiles == MAXWADFILES)
+	    I_Error ("W_AddFile: too many wad files");
+	strncpy (wadfiles[numwadfiles].path, filename,
+		 sizeof(wadfiles[numwadfiles].path)-1);
+	wadfiles[numwadfiles].fp = handle;
+	storehandle = numwadfiles++;
+    }
 
     fi = fileinfo;
     for (i=startlump ; i<numlumps ; i++,lump_p++, fi++)
@@ -498,22 +551,44 @@ W_ReadLump
     l = lumpinfo+lump;
     // ??? I_BeginRead ();
 
-    if (l->handle == NULL)
+    {
+	static char step[24];
+	snprintf (step, sizeof(step), "W_ReadLump %.8s", l->name);
+	psp_step = step;
+    }
+    psp_wait_resume ();
+
+    if (psp_resume_count != seen_resume_count)
+    {
+	seen_resume_count = psp_resume_count;
+	W_ReopenFiles ();
+    }
+
+    if (l->handle < 0)
     {
 	// reloadable file, so use open / read / close
-	if ( (handle = fopen (reloadname,"r")) == NULL)
+	if ( (handle = W_OpenRetry (reloadname)) == NULL)
 	    I_Error ("W_ReadLump: couldn't open %s",reloadname);
     }
     else
-	handle = l->handle;
+	handle = wadfiles[l->handle].fp;
     fseek (handle, l->position, SEEK_SET);
 	  c = fread (dest, 1, l->size, handle);
+
+    if (c < l->size && l->handle >= 0)
+    {
+	// handle may have gone stale across sleep without a callback
+	W_ReopenFiles ();
+	handle = wadfiles[l->handle].fp;
+	fseek (handle, l->position, SEEK_SET);
+	c = fread (dest, 1, l->size, handle);
+    }
 
     if (c < l->size)
 	I_Error ("W_ReadLump: only read %i of %i on lump %i",
 		 c,l->size,lump);
 
-    if (l->handle == NULL)
+    if (l->handle < 0)
 	fclose (handle);
 
     // ??? I_EndRead ();

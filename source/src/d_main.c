@@ -370,6 +370,8 @@ void D_Display (void)
         {
             nowtime = I_GetTime ();
             tics = nowtime - wipestart;
+            if (!tics)
+                I_Yield ();
         } while (!tics);
         wipestart = nowtime;
         done = wipe_ScreenWipe(wipe_Melt

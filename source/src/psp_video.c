@@ -301,6 +301,7 @@ void I_FinishUpdate (void)
 	if (video_vsync)
 		sceDisplayWaitVblankStart();
 
+	psp_step = "I_FinishUpdate flip";
 	sceDisplaySetFrameBuf((void *) vramflip ? vram1 : vram2, lineWidth, PSP_DISPLAY_PIXEL_FORMAT_8888, 1);
 
 	vramflip ^= 1;

@@ -29,6 +29,7 @@ rcsid[] = "$Id: m_misc.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
 
 #include <pspkernel.h>
 #include <pspdebug.h>
+#include <psppower.h>
 
 #ifndef PSP //__VBCC__
 #ifdef __SASC
@@ -130,13 +131,19 @@ M_WriteFile
 		FILE *handle;
 		int count;
 
+		// don't let the PSP sleep mid-write and corrupt the file
+		scePowerLock(0);
 		handle = fopen (name, "wb");
 
 		if (handle == NULL)
+		{
+			scePowerUnlock(0);
 			return false;
+		}
 
 		count = fwrite (source, 1, length, handle);
 		fclose (handle);
+		scePowerUnlock(0);
 
 		if (count < length)
 			return false;
@@ -391,9 +398,13 @@ void M_SaveDefaults (void)
     int		v;
     FILE*	f;
 
+    scePowerLock(0);
     f = fopen (defaultfile, "w");
     if (!f)
+    {
+	scePowerUnlock(0);
 	return; // can't write the file, but don't complain
+    }
 
     for (i=0 ; i<numdefaults ; i++)
     {
@@ -409,6 +420,7 @@ void M_SaveDefaults (void)
     }
 
     fclose (f);
+    scePowerUnlock(0);
 }
 
 

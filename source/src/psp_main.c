@@ -94,12 +94,40 @@ int exit_callback(int arg1, int arg2, void *common) {
 	return 0;
 }
 
+/* Power callback: sleep (power switch, PSP Go slider, Pause Game).
+ * While suspending, the main thread parks (psp_wait_resume) so it does
+ * no file I/O. Sleep invalidates open file handles; w_wad.c reopens
+ * them when psp_resume_count changes. */
+volatile int psp_resume_count = 0;
+
+int power_callback(int unknown, int flags, void *common) {
+	if (flags & (PSP_POWER_CB_SUSPENDING | PSP_POWER_CB_STANDBY))
+	{
+		psp_suspending = 1;
+		psp_sleeplog("power cb %08X: suspending, main at %s", flags, psp_step);
+	}
+	else if (flags & (PSP_POWER_CB_RESUMING | PSP_POWER_CB_RESUME_COMPLETE))
+	{
+		if (flags & PSP_POWER_CB_RESUME_COMPLETE)
+		{
+			psp_resume_count++;
+			psp_sleeplog("power cb %08X: resume complete", flags);
+		}
+		psp_suspending = 0;
+	}
+	else
+		psp_sleeplog("power cb %08X: other, main at %s", flags, psp_step);
+	return 0;
+}
+
 /* Callback thread */
 int CallbackThread(SceSize args, void *argp) {
 	int cbid;
 
 	cbid = sceKernelCreateCallback("Exit Callback", exit_callback, NULL);
 	sceKernelRegisterExitCallback(cbid);
+	cbid = sceKernelCreateCallback("Power Callback", power_callback, NULL);
+	scePowerRegisterCallback(-1, cbid);
 	sceKernelSleepThreadCB();
 	return 0;
 }
@@ -1761,17 +1789,28 @@ int InitialiseNetwork(void)
   return 0;
 }
 
-void psp_net_init (void)
-{
-	int i;
+// The net stack is loaded only when a connection is actually requested:
+// once initialised it blocks PSP sleep (LED blinks, then power off).
+static int psp_net_started = 0;
 
+static int psp_net_start(void)
+{
+	if (psp_net_started)
+		return 0;
+	if (psp_net_error)
+		return 1;
 	if (InitialiseNetwork() != 0)
 	{
 		psp_net_error = 1;
-		printf("Networking not available. Will be disabled for game.\n");
-		sceKernelDelayThread(4*1000*1000);
-		return;
+		return 1;
 	}
+	psp_net_started = 1;
+	return 0;
+}
+
+void psp_net_init (void)
+{
+	int i;
 
 	for (i=1; i<100; i++)
 	{
@@ -1811,6 +1850,14 @@ void psp_net_connect (void * arg)
 			sceKernelDelayThread(4*1000*1000);
 			return;
 		}
+
+	if (psp_net_start() != 0)
+	{
+		printf("Networking not available. Will be disabled for game.\n");
+		sceKernelDelayThread(4*1000*1000);
+		pspDebugScreenClear();
+		return;
+	}
 
 	thid = sceKernelCreateThread("net_thread", net_thread, 0x18, 0x10000, PSP_THREAD_ATTR_USER, NULL);
 	if (thid < 0) {
@@ -1873,9 +1920,9 @@ void psp_net_reconnect(void)
 	p = M_CheckParm ("-cpuMHz");
 
 	// check if need to disconnect
-	if ((psp_net_enabled && (psp_net_accesspoint != connected_accesspoint))
+	if (psp_net_started && ((psp_net_enabled && (psp_net_accesspoint != connected_accesspoint))
 	  || p
-	  || (!psp_net_enabled && connected_accesspoint))
+	  || (!psp_net_enabled && connected_accesspoint)))
 	{
 		// disconnect access point
 		sceNetApctlDisconnect();
@@ -1898,18 +1945,23 @@ void psp_net_reconnect(void)
 		int i;
 
 		// reconnect to selected access point
-		thid = sceKernelCreateThread("net_thread", net_thread, 0x18, 0x10000, PSP_THREAD_ATTR_USER, NULL);
-		if (thid < 0) {
+		thid = -1;
+		if (psp_net_start() != 0)
+			printf("Networking not available. Networking disabled for game.\n");
+		else if ((thid = sceKernelCreateThread("net_thread", net_thread, 0x18, 0x10000, PSP_THREAD_ATTR_USER, NULL)) < 0)
 			printf("Could not create network thread. Networking disabled for game.\n");
-			psp_net_enabled = 0;
-		}
-		sceKernelStartThread(thid, 0, NULL);
-		for (i=0; i<30; i++)
+		else
 		{
-			if (psp_net_available) break;
-			sceKernelDelayThread(1000*1000);
+			sceKernelStartThread(thid, 0, NULL);
+			for (i=0; i<30; i++)
+			{
+				if (psp_net_available) break;
+				sceKernelDelayThread(1000*1000);
+			}
 		}
-		if (psp_net_available != 1)
+		if (thid < 0)
+			psp_net_enabled = 0;
+		else if (psp_net_available != 1)
 		{
 			printf("Couldn't connect to access point. Networking disabled for game.\n");
 			psp_net_enabled = 0;

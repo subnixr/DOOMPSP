@@ -500,7 +500,10 @@ void CheckAbort (void)
 
     stoptic = I_GetTime () + 2;
     while (I_GetTime() < stoptic)
+    {
 	I_StartTic ();
+	I_Yield ();
+    }
 
     I_StartTic ();
     for ( ; eventtail != eventhead
@@ -763,6 +766,7 @@ void TryRunTics (void)
     // wait for new tics if needed
     while (lowtic < gametic/ticdup + counts)
     {
+	psp_step = "TryRunTics wait";
 	NetUpdate ();
 	lowtic = MAXINT;
 
@@ -779,6 +783,8 @@ void TryRunTics (void)
 	    M_Ticker ();
 	    return;
 	}
+
+	I_Yield ();
     }
 
     // run the count * ticdup dics
