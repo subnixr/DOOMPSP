@@ -42,6 +42,8 @@ rcsid[] = "$Id: hu_stuff.c,v 1.4 1997/02/03 16:47:52 b1 Exp $";
 // Data.
 #include "dstrings.h"
 #include "sounds.h"
+#include "r_main.h"
+#include "v_video.h"
 
 //
 // Locally used constants, shortcuts.
@@ -102,6 +104,9 @@ static boolean		message_nottobefuckedwith;
 
 static hu_stext_t	w_message;
 static int		message_counter;
+
+static char*		center_message;
+static int		center_counter;
 
 extern int		showMessages;
 extern boolean		automapactive;
@@ -430,6 +435,8 @@ void HU_Start(void)
     message_on = false;
     message_dontfuckwithme = false;
     message_nottobefuckedwith = false;
+    center_message = NULL;
+    center_counter = 0;
     chat_on = false;
 
     // create the message widget
@@ -484,10 +491,52 @@ void HU_Start(void)
 
 }
 
+void HU_CenterMessage(char* msg)
+{
+    center_message = msg;
+    center_counter = HU_CENTERTIMEOUT;
+}
+
+static void HU_DrawCenterMessage(void)
+{
+    char*	s;
+    int		c;
+    int		w;
+    int		x;
+    int		y;
+
+    w = 0;
+    for (s = center_message; *s; s++)
+    {
+	c = toupper(*s);
+	if (c != ' ' && c >= HU_FONTSTART && c <= HU_FONTEND)
+	    w += SWAPSHORT(hu_font[c - HU_FONTSTART]->width);
+	else
+	    w += 4;
+    }
+
+    x = (SCREENWIDTH - w) / 2;
+    y = viewwindowy + viewheight/2 - 3*SWAPSHORT(hu_font[0]->height);
+
+    for (s = center_message; *s; s++)
+    {
+	c = toupper(*s);
+	if (c != ' ' && c >= HU_FONTSTART && c <= HU_FONTEND)
+	{
+	    V_DrawPatchDirect(x, y, FG, hu_font[c - HU_FONTSTART]);
+	    x += SWAPSHORT(hu_font[c - HU_FONTSTART]->width);
+	}
+	else
+	    x += 4;
+    }
+}
+
 void HU_Drawer(void)
 {
 
     HUlib_drawSText(&w_message);
+    if (center_message)
+	HU_DrawCenterMessage();
     HUlib_drawIText(&w_chat);
     if (automapactive)
 	HUlib_drawTextLine(&w_title, false);
@@ -508,6 +557,10 @@ void HU_Ticker(void)
 
     int i, rc;
     char c;
+
+    // tick down center message counter
+    if (center_counter && !--center_counter)
+	center_message = NULL;
 
     // tick down message counter if message is up
     if (message_counter && !--message_counter)

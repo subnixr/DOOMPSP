@@ -42,6 +42,7 @@
 #define HU_MSGHEIGHT	1	// in lines
 
 #define HU_MSGTIMEOUT	(4*TICRATE)
+#define HU_CENTERTIMEOUT	(5*TICRATE/2)
 
 //
 // HEADS UP TEXT
@@ -56,6 +57,7 @@ void HU_Ticker(void);
 void HU_Drawer(void);
 char HU_dequeueChatChar(void);
 void HU_Erase(void);
+void HU_CenterMessage(char* msg);
 
 
 #endif

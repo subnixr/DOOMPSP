@@ -57,6 +57,8 @@ rcsid[] = "$Id: p_spec.c,v 1.6 1997/02/03 22:45:12 b1 Exp $";
 
 // Data.
 #include "sounds.h"
+#include "dstrings.h"
+#include "hu_stuff.h"
 
 
 //
@@ -1054,6 +1056,11 @@ void P_PlayerInSpecialSector (player_t* player)
 	// SECRET SECTOR
 	player->secretcount++;
 	sector->special = 0;
+	if (player == &players[consoleplayer])
+	{
+	    HU_CenterMessage (SECRETFOUND);
+	    S_StartSound (NULL, sfx_itmbk);
+	}
 	break;
 
       case 11:

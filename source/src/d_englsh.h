@@ -100,6 +100,7 @@
 #define GOTMAP	"Computer Area Map"
 #define GOTVISOR	"Light Amplification Visor"
 #define GOTMSPHERE	"MegaSphere!"
+#define SECRETFOUND	"A secret is revealed!"
 
 #define GOTCLIP	"Picked up a clip."
 #define GOTCLIPBOX	"Picked up a box of bullets."
