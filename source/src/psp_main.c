@@ -559,10 +559,8 @@ int psp_stick_minx = 0;
 int psp_stick_miny = 0;
 int psp_stick_maxx = 255;
 int psp_stick_maxy = 255;
-int psp_ctrl_cheat1= 0;
-int psp_ctrl_cheat2= 0;
-int psp_ctrl_cheat3= 0;
-int psp_ctrl_cheat4= 0;
+#define NUM_CHEAT_SLOTS 12
+int psp_ctrl_cheat[NUM_CHEAT_SLOTS] = { 3, 12, 2, 1, 9, 11, 7, 8, 10, 5, 6, 4 };
 int psp_ctrl_swapmove = 0;
 int psp_ctrl_swapturn = 0;
 
@@ -1496,7 +1494,7 @@ void psp_gui(void)
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
 
-	struct gui_list ctrl_cheat_list[] = {
+	struct gui_list cheat_list[] = {
 		{ "none", 0 },
 		{ "God Mode", 1 },
 		{ "Fucking Arsenal", 2 },
@@ -1529,11 +1527,24 @@ void psp_gui(void)
 		{ "Calibrate Analog Stick", GUI_CENTER | GUI_FUNCTION, &psp_stick_calibrate, 0, GUI_ENABLED },
 		{ "Movement", GUI_CENTER | GUI_SELECT, &ctrl_move_list, &psp_ctrl_swapmove, GUI_ENABLED },
 		{ "L/R", GUI_CENTER | GUI_SELECT, &ctrl_lr_list, &psp_ctrl_swapturn, GUI_ENABLED },
+		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
+	};
+
+	struct gui_menu CheatLevel[] = {
+		{ "SELECT + SQUARE", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[2], GUI_ENABLED },
+		{ "SELECT + TRIANGLE", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[3], GUI_ENABLED },
+		{ "SELECT + CIRCLE", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[0], GUI_ENABLED },
+		{ "SELECT + CROSS", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[1], GUI_ENABLED },
 		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
-		{ "SELECT + SQUARE Cheat", GUI_CENTER | GUI_SELECT, &ctrl_cheat_list, &psp_ctrl_cheat3, GUI_ENABLED },
-		{ "SELECT + TRIANGLE Cheat", GUI_CENTER | GUI_SELECT, &ctrl_cheat_list, &psp_ctrl_cheat4, GUI_ENABLED },
-		{ "SELECT + CIRCLE Cheat", GUI_CENTER | GUI_SELECT, &ctrl_cheat_list, &psp_ctrl_cheat1, GUI_ENABLED },
-		{ "SELECT + CROSS Cheat", GUI_CENTER | GUI_SELECT, &ctrl_cheat_list, &psp_ctrl_cheat2, GUI_ENABLED },
+		{ "SELECT + R + SQUARE", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[6], GUI_ENABLED },
+		{ "SELECT + R + TRIANGLE", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[7], GUI_ENABLED },
+		{ "SELECT + R + CIRCLE", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[4], GUI_ENABLED },
+		{ "SELECT + R + CROSS", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[5], GUI_ENABLED },
+		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
+		{ "SELECT + L + SQUARE", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[10], GUI_ENABLED },
+		{ "SELECT + L + TRIANGLE", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[11], GUI_ENABLED },
+		{ "SELECT + L + CIRCLE", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[8], GUI_ENABLED },
+		{ "SELECT + L + CROSS", GUI_CENTER | GUI_SELECT, &cheat_list, &psp_ctrl_cheat[9], GUI_ENABLED },
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
 
@@ -1636,6 +1647,7 @@ void psp_gui(void)
 		{ "Video", GUI_CENTER | GUI_MENU, VideoLevel, 0, GUI_ENABLED },
 		{ "Sound", GUI_CENTER | GUI_MENU, SoundLevel, 0, GUI_ENABLED },
 		{ "Controller", GUI_CENTER | GUI_MENU, ControlLevel, 0, GUI_ENABLED },
+		{ "Cheats", GUI_CENTER | GUI_MENU, CheatLevel, 0, GUI_ENABLED },
 		{ "File", GUI_CENTER | GUI_MENU, FileLevel, 0, GUI_ENABLED },
 		{ "Game", GUI_CENTER | GUI_MENU, GameLevel, 0, GUI_ENABLED },
 		{ "Network", GUI_CENTER | GUI_MENU, NetLevel, 0, GUI_ENABLED },
@@ -2520,38 +2532,16 @@ void set_myargv(void)
 	myargv[myargc] = strdup(temp);
 	myargc++;
 
-	if (psp_ctrl_cheat1)
-	{
-		myargv[myargc] = strdup("-cheat1");
-		myargc++;
-		sprintf(temp, "%d", psp_ctrl_cheat1);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-	}
-	if (psp_ctrl_cheat2)
-	{
-		myargv[myargc] = strdup("-cheat2");
-		myargc++;
-		sprintf(temp, "%d", psp_ctrl_cheat2);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-	}
-	if (psp_ctrl_cheat3)
-	{
-		myargv[myargc] = strdup("-cheat3");
-		myargc++;
-		sprintf(temp, "%d", psp_ctrl_cheat3);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-	}
-	if (psp_ctrl_cheat4)
-	{
-		myargv[myargc] = strdup("-cheat4");
-		myargc++;
-		sprintf(temp, "%d", psp_ctrl_cheat4);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-	}
+	for (i=0; i<NUM_CHEAT_SLOTS; i++)
+		if (psp_ctrl_cheat[i])
+		{
+			sprintf(temp, "-cheat%d", i+1);
+			myargv[myargc] = strdup(temp);
+			myargc++;
+			sprintf(temp, "%d", psp_ctrl_cheat[i]);
+			myargv[myargc] = strdup(temp);
+			myargc++;
+		}
 
 	if (psp_ctrl_swapmove)
 	{
@@ -2993,22 +2983,16 @@ void get_myargv(void)
 	if (i)
 		sscanf(myargv[i+1], "%d", &psp_stick_maxy);
 
-	psp_ctrl_cheat1 = 0;
-	i = first_argv("-cheat1");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_ctrl_cheat1);
-	psp_ctrl_cheat2 = 0;
-	i = first_argv("-cheat2");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_ctrl_cheat2);
-	psp_ctrl_cheat3 = 0;
-	i = first_argv("-cheat3");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_ctrl_cheat3);
-	psp_ctrl_cheat4 = 0;
-	i = first_argv("-cheat4");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_ctrl_cheat4);
+	for (j=0; j<NUM_CHEAT_SLOTS; j++)
+	{
+		char arg[24];
+
+		sprintf(arg, "-cheat%d", j+1);
+		psp_ctrl_cheat[j] = 0;
+		i = first_argv(arg);
+		if (i)
+			sscanf(myargv[i+1], "%d", &psp_ctrl_cheat[j]);
+	}
 
 	psp_ctrl_swapmove = first_argv("-swapmove") ? 1 : 0;
 	psp_ctrl_swapturn = first_argv("-swapturn") ? 1 : 0;

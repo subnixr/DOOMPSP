@@ -33,7 +33,7 @@
 #endif
 
 
-#define MAXARGVS        100
+#define MAXARGVS        128
 
 // Called by DoomMain.
 void I_Init (void);

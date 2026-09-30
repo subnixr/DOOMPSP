@@ -53,10 +53,8 @@ static int stick_minx = 0;
 static int stick_miny = 0;
 static int stick_maxx = 255;
 static int stick_maxy = 255;
-static int ctrl_cheat1= 0;
-static int ctrl_cheat2= 0;
-static int ctrl_cheat3= 0;
-static int ctrl_cheat4= 0;
+#define NUM_CHEAT_SLOTS 12
+static int ctrl_cheat[NUM_CHEAT_SLOTS];
 static int swap_move = 0;   // DPad moves, analog does the DPad actions
 static int swap_turn = 0;   // L/R strafe, move stick X turns
 
@@ -66,7 +64,7 @@ extern int psp_stickturn;
 // Called by DoomMain.
 void I_Init (void)
 {
-	int p;
+	int p, i;
 
 	I_InitSound ();
 	I_InitMusic ();
@@ -98,18 +96,15 @@ void I_Init (void)
 			stick_maxy = atoi (myargv[p+1]);
 	}
 
-	p = M_CheckParm ("-cheat1");
-	if (p && p < myargc - 1)
-		ctrl_cheat1 = atoi (myargv[p+1]);
-	p = M_CheckParm ("-cheat2");
-	if (p && p < myargc - 1)
-		ctrl_cheat2 = atoi (myargv[p+1]);
-	p = M_CheckParm ("-cheat3");
-	if (p && p < myargc - 1)
-		ctrl_cheat3 = atoi (myargv[p+1]);
-	p = M_CheckParm ("-cheat4");
-	if (p && p < myargc - 1)
-		ctrl_cheat4 = atoi (myargv[p+1]);
+	for (i=0; i<NUM_CHEAT_SLOTS; i++)
+	{
+		char arg[24];
+
+		sprintf(arg, "-cheat%d", i+1);
+		p = M_CheckParm (arg);
+		if (p && p < myargc - 1)
+			ctrl_cheat[i] = atoi (myargv[p+1]);
+	}
 
 	swap_move = M_CheckParm ("-swapmove") != 0;
 	swap_turn = M_CheckParm ("-swapturn") != 0;
@@ -489,36 +484,6 @@ void psp_do_cheat(int cheat)
 }
 
 extern boolean menuactive;
-extern int get_text_osk(char *input, unsigned short *intext, unsigned short *desc);
-extern void video_set_vmode(void);
-
-void psp_send_string(void)
-{
-    event_t event;
-	int ok, i;
-	char str[64];
-	unsigned short intext[128]  = { 0 }; // text already in the edit box on start
-	unsigned short desc[128]	= { 'E', 'n', 't', 'e', 'r', ' ', 'T', 'e', 'x', 't', 0 }; // description
-
-	ok = get_text_osk(str, intext, desc);
-
-	video_set_vmode();
-
-	if (ok)
-	{
-		strcat(str, " ");
-		for (i=0; i<strlen(str); i++)
-		{
-	   	    event.type = ev_keydown;
-	        event.data1 = str[i];
-	        D_PostEvent (&event);
-	        event.type = ev_keyup;
-	        event.data1 = str[i];
-	        D_PostEvent (&event);
-		}
-	}
-}
-
 extern int psp_weapon_change;
 
 #define PSP_NUMSLOTS 7
@@ -769,21 +734,19 @@ void psp_getevents (void)
 	}
 	else
 	{
-		// SELECT + START = on screen keyboard
-		if (PRESSED(PSP_CTRL_START))
-			psp_send_string();
-
 		if (!menuactive)
 		{
-			// SELECT + face buttons = launcher cheats
-			if (PRESSED(PSP_CTRL_CIRCLE))
-				psp_do_cheat(ctrl_cheat1);
-			if (PRESSED(PSP_CTRL_CROSS))
-				psp_do_cheat(ctrl_cheat2);
-			if (PRESSED(PSP_CTRL_SQUARE))
-				psp_do_cheat(ctrl_cheat3);
-			if (PRESSED(PSP_CTRL_TRIANGLE))
-				psp_do_cheat(ctrl_cheat4);
+			// SELECT (+ R or L) + face buttons = launcher cheats
+			static const int cheat_btn[4] = {
+				PSP_CTRL_CIRCLE, PSP_CTRL_CROSS, PSP_CTRL_SQUARE, PSP_CTRL_TRIANGLE
+			};
+			int bank = (cur & PSP_CTRL_RTRIGGER) ? 4 :
+				(cur & PSP_CTRL_LTRIGGER) ? 8 : 0;
+			int i;
+
+			for (i=0; i<4; i++)
+				if (PRESSED(cheat_btn[i]))
+					psp_do_cheat(ctrl_cheat[bank + i]);
 
 			// SELECT + RIGHT/LEFT = gamma up/down, SELECT + DOWN = detail
 			if (PRESSED(PSP_CTRL_RIGHT))

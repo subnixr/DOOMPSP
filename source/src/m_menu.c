@@ -27,6 +27,7 @@ rcsid[] = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp $";
 
 #include <pspkernel.h>
 #include <pspdebug.h>
+#include <psprtc.h>
 
 #ifndef PSP //__VBCC__
 #include <unistd.h>
@@ -124,12 +125,7 @@ char gammamsg[5][26] =
     GAMMALVL4
 };
 
-// we are going to be entering a savegame string
-int			saveStringEnter;
 int             	saveSlot;	// which slot to save in
-int			saveCharIndex;	// which char we're editing
-// old save description before edit
-char			saveOldString[SAVESTRINGSIZE];
 
 boolean			inhelpscreens;
 boolean			menuactive;
@@ -642,12 +638,6 @@ void M_DrawSave(void)
 	M_DrawSaveLoadBorder(LoadDef.x,LoadDef.y+LINEHEIGHT*i);
 	M_WriteText(LoadDef.x,LoadDef.y+LINEHEIGHT*i,savegamestrings[i]);
     }
-
-    if (saveStringEnter)
-    {
-	i = M_StringWidth(savegamestrings[saveSlot]);
-	M_WriteText(LoadDef.x + i,LoadDef.y+LINEHEIGHT*saveSlot,"_");
-    }
 }
 
 //
@@ -664,18 +654,62 @@ void M_DoSave(int slot)
 }
 
 //
-// User wants to save. Start string input for M_Responder
+// PSP: no keyboard, describe the save as "<map> <skill> <MM-DD HH:MM>"
+//
+static void M_BuildSaveName(char *dst)
+{
+    static const char *skillnames[] = { "E", "M", "H", "H+", "H++" };
+    char map[8];
+    int skill;
+    ScePspDateTime t;
+
+    if (gamemode == commercial)
+	sprintf(map, "MAP%02d", gamemap);
+    else
+	sprintf(map, "E%dM%d", gameepisode, gamemap);
+
+    skill = gameskill;
+    if (skill < 0)
+	skill = 0;
+    if (skill > 4)
+	skill = 4;
+
+    memset(&t, 0, sizeof(t));
+    sceRtcGetCurrentClockLocalTime(&t);
+
+    snprintf(dst, SAVESTRINGSIZE, "%s %s %02d-%02d %02d:%02d",
+	     map, skillnames[skill], t.month, t.day, t.hour, t.minute);
+}
+
+static void M_SaveAuto(int slot)
+{
+    M_BuildSaveName(savegamestrings[slot]);
+    M_DoSave(slot);
+}
+
+static char saveprompt[80];
+
+static void M_SaveOverwriteResponse(int ch)
+{
+    if (ch == 'y')
+	M_SaveAuto(saveSlot);
+}
+
+//
+// User wants to save. Confirm if the slot is taken
 //
 void M_SaveSelect(int choice)
 {
-    // we are going to be intercepting all chars
-    saveStringEnter = 1;
-
     saveSlot = choice;
-    strcpy(saveOldString,savegamestrings[choice]);
-    if (!strcmp(savegamestrings[choice],EMPTYSTRING))
-	savegamestrings[choice][0] = 0;
-    saveCharIndex = strlen(savegamestrings[choice]);
+
+    if (LoadMenu[choice].status)
+    {
+	sprintf(saveprompt, SAVEOVERWRITE, savegamestrings[choice]);
+	M_StartMessage(saveprompt, M_SaveOverwriteResponse, true);
+	return;
+    }
+
+    M_SaveAuto(choice);
 }
 
 //
@@ -707,7 +741,7 @@ void M_QuickSaveResponse(int ch)
 {
     if (ch == 'y')
     {
-	M_DoSave(quickSaveSlot);
+	M_SaveAuto(quickSaveSlot);
 	S_StartSound(NULL,sfx_swtchx);
     }
 }
@@ -1494,48 +1528,6 @@ boolean M_Responder (event_t* ev)
     if (ch == -1)
 	return false;
 
-
-    // Save Game string input
-    if (saveStringEnter)
-    {
-	switch(ch)
-	{
-	  case KEY_BACKSPACE:
-	    if (saveCharIndex > 0)
-	    {
-		saveCharIndex--;
-		savegamestrings[saveSlot][saveCharIndex] = 0;
-	    }
-	    break;
-
-	  case KEY_ESCAPE:
-	    saveStringEnter = 0;
-	    strcpy(&savegamestrings[saveSlot][0],saveOldString);
-	    break;
-
-	  case KEY_ENTER:
-	    saveStringEnter = 0;
-	    if (savegamestrings[saveSlot][0])
-		M_DoSave(saveSlot);
-	    break;
-
-	  default:
-	    ch = toupper(ch);
-	    if (ch != 32)
-		if (ch-HU_FONTSTART < 0 || ch-HU_FONTSTART >= HU_FONTSIZE)
-		    break;
-	    if (ch >= 32 && ch <= 127 &&
-		saveCharIndex < SAVESTRINGSIZE-1 &&
-		M_StringWidth(savegamestrings[saveSlot]) <
-		(SAVESTRINGSIZE-2)*8)
-	    {
-		savegamestrings[saveSlot][saveCharIndex++] = ch;
-		savegamestrings[saveSlot][saveCharIndex] = 0;
-	    }
-	    break;
-	}
-	return true;
-    }
 
     // Take care of any messages that need input
     if (messageToPrint)
