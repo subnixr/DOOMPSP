@@ -321,6 +321,10 @@ int get_text_osk(char *input, unsigned short *intext, unsigned short *desc)
 
 	ResetGu();
 
+	// 0 = init failed, -1 = user cancelled, 1 = text entered
+	if (data.result == PSP_UTILITY_OSK_RESULT_CANCELLED)
+		return -1;
+
 	return 1;
 }
 
@@ -1057,9 +1061,13 @@ void psp_load_config(void *arg)
 	int i;
 	char *req;
 	char dir[256];
+	FILE *handle;
+	char temp[256];
 
 	snprintf(dir, sizeof(dir), "%sconfig/", psp_home);
 	req = RequestFile(dir);
+	if (!req)
+		return;	// requester cancelled: keep current config
 
 	pspDebugScreenInit();
 	pspDebugScreenSetBackColor(0xFF000000);
@@ -1075,46 +1083,35 @@ void psp_load_config(void *arg)
 		}
 	myargc = 0;
 
-	if (req)
+	printf("Attempting to load config from %s\n\n", req);
+
+	handle = fopen (req, "r");
+	if (handle == NULL)
 	{
-		FILE *handle;
-		char temp[256];
-
-		printf("Attempting to load config from %s\n\n", req);
-
-		handle = fopen (req, "r");
-		if (handle == NULL)
-		{
-			printf("Error! Couldn't open file %s\n\n", req);
-			sceKernelDelayThread(2*1000*1000);
-			return;
-		}
-
-		for (i = 0 ; i < MAXARGVS; i++)
-		{
-			temp[0] = 0;
-			fgets(temp, 255, handle);
-			printf(" %d : %s", i, temp);
-			if (temp[0] == 0)
-				break;
-			temp[strlen(temp) - 1] = 0;
-			myargv[i] = strdup(temp);
-		}
-		myargc = i;
-
-		fclose (handle);
-
-		get_myargv();
-		snprintf(psp_cfg_status, sizeof(psp_cfg_status), "%s", req);
-
-		printf("\nConfig loaded\n\n");
-		sceKernelDelayThread(3*1000*1000);
-	}
-	else
-	{
-		printf("You need to enter a filename to load!\n\n");
+		printf("Error! Couldn't open file %s\n\n", req);
 		sceKernelDelayThread(2*1000*1000);
+		return;
 	}
+
+	for (i = 0 ; i < MAXARGVS; i++)
+	{
+		temp[0] = 0;
+		fgets(temp, 255, handle);
+		printf(" %d : %s", i, temp);
+		if (temp[0] == 0)
+			break;
+		temp[strlen(temp) - 1] = 0;
+		myargv[i] = strdup(temp);
+	}
+	myargc = i;
+
+	fclose (handle);
+
+	get_myargv();
+	snprintf(psp_cfg_status, sizeof(psp_cfg_status), "%s", req);
+
+	printf("\nConfig loaded\n\n");
+	sceKernelDelayThread(3*1000*1000);
 	pspDebugScreenClear();
 }
 
@@ -1132,7 +1129,10 @@ void psp_save_config(void *arg)
 	pspDebugScreenSetTextColor(0xFFFFFFFF);
 	pspDebugScreenClear();
 
-	if (ok)
+	if (ok < 0)
+		return;	// keyboard cancelled: don't save
+
+	if (ok && filename[0])
 	{
 		FILE *handle;
 		char temp[256];
