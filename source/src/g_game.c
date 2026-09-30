@@ -205,6 +205,7 @@ boolean*        mousebuttons = &mousearray[1];          // allow [-1]
 
 // mouse values are used once
 int             psp_stickturn;  // PSP: move stick X turns instead of strafing
+int             psp_alwaysrun;  // PSP: run by default, speed key walks
 int             mousex;
 int             mousey;
 
@@ -273,7 +274,7 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 
     strafe = gamekeydown[key_strafe] || mousebuttons[mousebstrafe]
         || joybuttons[joybstrafe];
-    speed = gamekeydown[key_speed] || joybuttons[joybspeed];
+    speed = psp_alwaysrun ^ (gamekeydown[key_speed] || joybuttons[joybspeed]);
 
     forward = side = 0;
 

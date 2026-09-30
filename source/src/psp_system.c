@@ -59,6 +59,7 @@ static int swap_move = 0;   // DPad moves, analog does the DPad actions
 static int swap_turn = 0;   // L/R strafe, move stick X turns
 
 extern int psp_stickturn;
+extern int psp_alwaysrun;
 
 /**********************************************************************/
 // Called by DoomMain.
@@ -109,6 +110,7 @@ void I_Init (void)
 	swap_move = M_CheckParm ("-swapmove") != 0;
 	swap_turn = M_CheckParm ("-swapturn") != 0;
 	psp_stickturn = swap_turn;
+	psp_alwaysrun = M_CheckParm ("-run") != 0;
 
 }
 
@@ -699,7 +701,7 @@ void psp_getevents (void)
 	}
 	else if (!sel)
 	{
-		// SQUARE = fire, CROSS = run, TRIANGLE/CIRCLE = use
+		// SQUARE = fire, CROSS = run (walk when always-run), TRIANGLE/CIRCLE = use
 		if (cur & PSP_CTRL_SQUARE)
 			joyevent.data1 |= 1;
 		if (cur & PSP_CTRL_CROSS)

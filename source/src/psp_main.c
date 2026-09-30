@@ -567,6 +567,7 @@ int psp_stick_maxy = 255;
 int psp_ctrl_cheat[NUM_CHEAT_SLOTS] = { 3, 12, 2, 1, 9, 11, 7, 8, 10, 5, 6, 4 };
 int psp_ctrl_swapmove = 0;
 int psp_ctrl_swapturn = 0;
+int psp_ctrl_run = 0;
 
 char *psp_iwad_file = 0;
 char *psp_pwad_file1 = 0;
@@ -1523,10 +1524,17 @@ void psp_gui(void)
 		{ 0, GUI_END_OF_LIST }
 	};
 
+	struct gui_list ctrl_speed_list[] = {
+		{ "Walk", 0 },
+		{ "Run", 1 },
+		{ 0, GUI_END_OF_LIST }
+	};
+
 	struct gui_menu ControlLevel[] = {
 		{ "Calibrate Analog Stick", GUI_CENTER | GUI_FUNCTION, &psp_stick_calibrate, 0, GUI_ENABLED },
 		{ "Movement", GUI_CENTER | GUI_SELECT, &ctrl_move_list, &psp_ctrl_swapmove, GUI_ENABLED },
 		{ "L/R", GUI_CENTER | GUI_SELECT, &ctrl_lr_list, &psp_ctrl_swapturn, GUI_ENABLED },
+		{ "Default movement", GUI_CENTER | GUI_SELECT, &ctrl_speed_list, &psp_ctrl_run, GUI_ENABLED },
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
 
@@ -2555,6 +2563,12 @@ void set_myargv(void)
 		myargc++;
 	}
 
+	if (psp_ctrl_run)
+	{
+		myargv[myargc] = strdup("-run");
+		myargc++;
+	}
+
 	if (psp_net_enabled && !psp_net_error)
 	{
 		myargv[myargc] = strdup("-typenet");
@@ -2996,6 +3010,7 @@ void get_myargv(void)
 
 	psp_ctrl_swapmove = first_argv("-swapmove") ? 1 : 0;
 	psp_ctrl_swapturn = first_argv("-swapturn") ? 1 : 0;
+	psp_ctrl_run = first_argv("-run") ? 1 : 0;
 
 	psp_net_enabled = 0;
 	i = first_argv("-net");

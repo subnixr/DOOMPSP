@@ -18,7 +18,7 @@ Chilly Willy's Doom v1.4 for the PSP (2007), rebuilt with a modern toolchain, a 
 | D-Pad ↓ | toggle automap |
 | D-Pad ↑ | whole-map zoom (map open) |
 | SQUARE | fire |
-| CROSS | run |
+| CROSS | run (walk with *Default movement = Run*) |
 | TRIANGLE / CIRCLE | use |
 | START | menu (pauses single player) |
 | SELECT + ← / → | gamma down / up |
@@ -27,7 +27,7 @@ Chilly Willy's Doom v1.4 for the PSP (2007), rebuilt with a modern toolchain, a 
 - Weapon cycling works like the PC number keys: fist/chainsaw and shotgun/super shotgun share a slot.
 - In the Doom menu: D-Pad or stick moves, CROSS selects or answers yes, CIRCLE goes back or answers no, START closes it.
 - Savegames are named automatically as map, skill and date, e.g. `E1M3 H 09-30 14:22` (skill: E, M, H, H+, H++ from ITYTD to Nightmare). Saving over a used slot asks for confirmation.
-- **Configure > Controller** options: *Movement = DPad* swaps the D-Pad and the stick. *L/R = Strafe* makes the triggers strafe and the stick turn. With *L/R = Turn*, turning is 1.5x faster than vanilla.
+- **Configure > Controller** options: *Movement = DPad* swaps the D-Pad and the stick. *L/R = Strafe* makes the triggers strafe and the stick turn. With *L/R = Turn*, turning is 1.5x faster than vanilla. *Default movement = Walk* (default) walks and CROSS runs; *Run* always runs and CROSS walks.
 
 ## Cheats
 
@@ -73,7 +73,7 @@ The root menu shows **Start**, the **Main WAD** in use, the **Config** file in u
 | Video > TV | (Slim, AV cable) 720x480 / 704x448 / 640x400, vsync, detail, interlace, aspect, center screen |
 | Video > Display | LCD or TV |
 | Sound | update rate 140/70/35 Hz, sound effects, music |
-| Controller | calibrate stick, Movement, L/R |
+| Controller | calibrate stick, Movement, L/R, Default movement |
 | Cheats | the 12 SELECT cheat slots |
 | File | main WAD, up to 4 patch WADs, up to 4 DEH files |
 | Game | no monsters, respawn, fast, turbo, map overlay, rotate map, demos |
