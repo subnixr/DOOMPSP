@@ -13,8 +13,6 @@ source/xmb/.snd0.wav
 
 # audio project sources, fetched tools
 source/xmb/*.flac
-source/xmb/*.RPP
-source/xmb/peaks/
 source/tools/ATRACTool-Rel-Portable/
 
 # user data, local scripts
