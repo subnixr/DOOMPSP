@@ -9,12 +9,14 @@
 #   make shell      interactive shell in the toolchain container
 #   make pull       pull/update the toolchain image
 #   make deploy     rsync game files to the PSP memory stick (deploy.sh)
+#   make run        build, then launch EBOOT.PBP in PPSSPP
 
 IMAGE       ?= pspdev/pspdev:latest
 PLATFORM    ?= linux/amd64
 DOCKER      ?= docker
 WINE        ?= wine
 FFMPEG      ?= ffmpeg
+PPSSPP      ?= PPSSPPSDL
 
 # XMB assets (icon, background, music, PARAM.SFO) live here.
 ASSETS = source/xmb
@@ -32,7 +34,7 @@ COMPAT_CFLAGS ?= -std=gnu99 -fcommon -Dstrcmpi=strcasecmp -Wno-error=implicit-fu
 RUN = $(DOCKER) run --rm --platform $(PLATFORM) \
       -v "$(CURDIR)":/src -w /src $(IMAGE)
 
-.PHONY: all sfo doom dvemgr snd0 clean shell pull deploy
+.PHONY: all sfo doom dvemgr snd0 clean shell pull deploy run
 
 all: sfo doom dvemgr
 
@@ -73,3 +75,6 @@ pull:
 
 deploy:
 	./deploy.sh
+
+run: doom
+	$(PPSSPP) "$(CURDIR)/EBOOT.PBP"
