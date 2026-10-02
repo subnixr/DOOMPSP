@@ -44,6 +44,8 @@ rcsid[] = "$Id: hu_stuff.c,v 1.4 1997/02/03 16:47:52 b1 Exp $";
 #include "sounds.h"
 #include "r_main.h"
 #include "v_video.h"
+#include "r_draw.h"
+#include "st_stuff.h"
 
 //
 // Locally used constants, shortcuts.
@@ -62,6 +64,10 @@ rcsid[] = "$Id: hu_stuff.c,v 1.4 1997/02/03 16:47:52 b1 Exp $";
 #define HU_INPUTY	(HU_MSGY + HU_MSGHEIGHT*(SWAPSHORT(hu_font[0]->height) +1))
 #define HU_INPUTWIDTH	64
 #define HU_INPUTHEIGHT	1
+
+// level stats widget, bottom left above the status bar
+#define HU_STATSX	HU_TITLEX
+#define HU_STATSMARGIN	2
 
 
 
@@ -110,8 +116,17 @@ static int		center_counter;
 
 extern int		showMessages;
 extern boolean		automapactive;
+extern int		maponhu;
 
 static boolean		headsupactive = false;
+
+// level stats widget: 0 = off, 1 = on
+int			hud_levelstats = 1;
+
+// font color translations (STCFN uses the red ramp 176-191)
+static byte		cr_green[256];
+static byte		cr_gold[256];
+static byte		cr_gray[256];
 
 //
 // Builtin map names.
@@ -415,6 +430,19 @@ void HU_Init(void)
 	hu_font[i] = (patch_t *) W_CacheLumpName(buffer, PU_STATIC);
     }
 
+    if (hud_levelstats < 0 || hud_levelstats > 1)
+	hud_levelstats = 1;
+
+    // build font color translations
+    for (i=0;i<256;i++)
+	cr_green[i] = cr_gold[i] = cr_gray[i] = i;
+    for (i=0;i<16;i++)
+    {
+	cr_green[176+i] = 112 + i;
+	cr_gold[176+i] = 160 + i/2;
+	cr_gray[176+i] = 80 + i*2;
+    }
+
 }
 
 void HU_Stop(void)
@@ -497,16 +525,40 @@ void HU_CenterMessage(char* msg)
     center_counter = HU_CENTERTIMEOUT;
 }
 
-static void HU_DrawCenterMessage(void)
+//
+// HU_DrawString
+// Draws s with the HUD font, colors remapped through xlat (NULL = none).
+// Returns the x after the last char.
+//
+static int HU_DrawString(int x, int y, char* s, byte* xlat)
 {
-    char*	s;
+    int		c;
+
+    for ( ; *s; s++)
+    {
+	c = toupper(*s);
+	if (c != ' ' && c >= HU_FONTSTART && c <= HU_FONTEND)
+	{
+	    V_DrawPatchTranslated(x, y, FG, hu_font[c - HU_FONTSTART], xlat);
+	    x += SWAPSHORT(hu_font[c - HU_FONTSTART]->width);
+	}
+	else
+	    x += 4;
+    }
+    return x;
+}
+
+//
+// HU_StringWidth
+// Width in pixels of s drawn by HU_DrawString.
+//
+static int HU_StringWidth(char* s)
+{
     int		c;
     int		w;
-    int		x;
-    int		y;
 
     w = 0;
-    for (s = center_message; *s; s++)
+    for ( ; *s; s++)
     {
 	c = toupper(*s);
 	if (c != ' ' && c >= HU_FONTSTART && c <= HU_FONTEND)
@@ -514,21 +566,80 @@ static void HU_DrawCenterMessage(void)
 	else
 	    w += 4;
     }
+    return w;
+}
 
-    x = (SCREENWIDTH - w) / 2;
+static void HU_DrawCenterMessage(void)
+{
+    int		x;
+    int		y;
+
+    x = (SCREENWIDTH - HU_StringWidth(center_message)) / 2;
     y = viewwindowy + viewheight/2 - 3*SWAPSHORT(hu_font[0]->height);
 
-    for (s = center_message; *s; s++)
+    HU_DrawString(x, y, center_message, NULL);
+}
+
+//
+// HU_LevelStatsTop
+// Top y of the two stats lines: bottom left, above the status bar
+// when it's up (reduced screen), above the map title on the automap,
+// else at the screen bottom.
+//
+static int HU_LevelStatsTop(void)
+{
+    int		bottom;
+
+    if (automapactive)
+	bottom = HU_TITLEY;
+    else if (viewheight != SCREENHEIGHT)
+	bottom = ST_Y;
+    else
+	bottom = SCREENHEIGHT;
+    return bottom - HU_STATSMARGIN - 2*(SWAPSHORT(hu_font[0]->height) + 1);
+}
+
+//
+// HU_DrawLevelStats
+// Level time and kills/items/secrets, like Boom/Crispy.
+// "<label> count/total": label red, numbers gold, green once complete.
+//
+static void HU_DrawLevelStats(void)
+{
+    char	time[32];
+    char	kbuf[24], ibuf[24], sbuf[24];
+    int		kills, items, secrets;
+    int		h, x, y, t, i;
+
+    kills = items = secrets = 0;
+    for (i=0 ; i<MAXPLAYERS ; i++)
     {
-	c = toupper(*s);
-	if (c != ' ' && c >= HU_FONTSTART && c <= HU_FONTEND)
-	{
-	    V_DrawPatchDirect(x, y, FG, hu_font[c - HU_FONTSTART]);
-	    x += SWAPSHORT(hu_font[c - HU_FONTSTART]->width);
-	}
-	else
-	    x += 4;
+	if (!playeringame[i])
+	    continue;
+	kills += players[i].killcount;
+	items += players[i].itemcount;
+	secrets += players[i].secretcount;
     }
+
+    h = SWAPSHORT(hu_font[0]->height) + 1;
+    y = HU_LevelStatsTop();
+
+    t = leveltime / TICRATE;
+    sprintf(time, "%d:%02d.%02d", t / 60, t % 60,
+	    (leveltime % TICRATE) * 100 / TICRATE);
+    x = HU_DrawString(HU_STATSX, y, "TIME ", cr_gray);
+    HU_DrawString(x, y, time, cr_green);
+
+    sprintf(kbuf, " %d/%d", kills, totalkills);
+    sprintf(ibuf, " %d/%d", items, totalitems);
+    sprintf(sbuf, " %d/%d", secrets, totalsecret);
+    y += h;
+    x = HU_DrawString(HU_STATSX, y, "K", NULL);
+    x = HU_DrawString(x, y, kbuf, kills >= totalkills ? cr_green : cr_gold);
+    x = HU_DrawString(x + 8, y, "I", NULL);
+    x = HU_DrawString(x, y, ibuf, items >= totalitems ? cr_green : cr_gold);
+    x = HU_DrawString(x + 8, y, "S", NULL);
+    HU_DrawString(x, y, sbuf, secrets >= totalsecret ? cr_green : cr_gold);
 }
 
 void HU_Drawer(void)
@@ -540,11 +651,40 @@ void HU_Drawer(void)
     HUlib_drawIText(&w_chat);
     if (automapactive)
 	HUlib_drawTextLine(&w_title, false);
+    if (gamestate == GS_LEVEL && hud_levelstats)
+	HU_DrawLevelStats();
 
+}
+
+//
+// HU_EraseLevelStats
+// Restores the view border under the stats lines on a reduced screen,
+// so changing digits (or turning the widget off) leave no trails.
+//
+static void HU_EraseLevelStats(void)
+{
+    int		y;
+    int		yoffset;
+    int		bottom;
+
+    if ((automapactive && !maponhu) || !viewwindowx)
+	return;
+
+    y = HU_LevelStatsTop();
+    bottom = y + 2*(SWAPSHORT(hu_font[0]->height) + 1);
+    for (yoffset=y*SCREENWIDTH ; y<bottom ; y++,yoffset+=SCREENWIDTH)
+    {
+	if (y < viewwindowy || y >= viewwindowy + viewheight)
+	    R_VideoErase(yoffset, SCREENWIDTH); // erase entire line
+	else
+	    R_VideoErase(yoffset, viewwindowx); // erase left border
+    }
 }
 
 void HU_Erase(void)
 {
+
+    HU_EraseLevelStats();
 
     HUlib_eraseSText(&w_message);
     HUlib_eraseIText(&w_chat);

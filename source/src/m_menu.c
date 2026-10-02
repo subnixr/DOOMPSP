@@ -88,6 +88,8 @@ int			mouseSensitivity;       // has default
 // Show messages has default, 0 = off, 1 = on
 int			showMessages;
 
+extern int		hud_levelstats;
+
 
 // Blocky mode, has default, 0 = high, 1 = normal
 int			detailLevel;
@@ -197,6 +199,7 @@ void M_ReadThis2(int choice);
 void M_QuitDOOM(int choice);
 
 void M_ChangeMessages(int choice);
+void M_ChangeLevelStats(int choice);
 void M_ChangeSensitivity(int choice);
 void M_SfxVol(int choice);
 void M_MusicVol(int choice);
@@ -345,6 +348,7 @@ enum
 {
     endgame,
     messages,
+    levelstats,
     detail,
     scrnsize,
     option_empty1,
@@ -358,6 +362,7 @@ menuitem_t OptionsMenu[]=
 {
     {1,"M_ENDGAM",	M_EndGame,'e'},
     {1,"M_MESSG",	M_ChangeMessages,'m'},
+    {1,"",		M_ChangeLevelStats,'l'},	// drawn as text by M_DrawOptions
     {1,"M_DETAIL",	M_ChangeDetail,'g'},
     {2,"M_SCRNSZ",	M_SizeDisplay,'s'},
     {-1,"",0},
@@ -372,7 +377,7 @@ menu_t  OptionsDef =
     &MainDef,
     OptionsMenu,
     M_DrawOptions,
-    60,37,
+    60,24,
     0
 };
 
@@ -1005,16 +1010,80 @@ void M_Episode(int choice)
 char    detailNames[2][9]	= {"M_GDHIGH","M_GDLOW"};
 char	msgNames[2][9]		= {"M_MSGOFF","M_MSGON"};
 
+//
+// "Level Stats:" has no menu graphic, so it's pieced together from
+// letters of the stock ones: columns col0..col1 of lump, then advance
+// by the width plus gap (gap 0 = letters share their outline column).
+//
+typedef struct
+{
+    char*	lump;
+    short	lumpwidth;	// expected width, to detect replaced gfx
+    short	col0;
+    short	col1;
+    short	gap;
+} menuslice_t;
+
+static menuslice_t levelStatsLabel[] =
+{
+    {"M_SKILL",	236, 164, 230, 10},	// "Level" from "Choose Skill Level:"
+    {"M_SCRNSZ",140,   0,  14,  0},	// "S" from "Screen Size"
+    {"M_DETAIL",174, 128, 139,  0},	// "t" from "Detail"
+    {"M_DETAIL",174, 139, 153,  0},	// "a" from "Detail"
+    {"M_DETAIL",174, 128, 139,  0},	// "t"
+    {"M_MESSG",	118,  98, 112,  1},	// "s" from "Messages:"
+    {"M_MESSG",	118, 114, 117,  0}	// ":"
+};
+#define NUMLEVELSTATSSLICES (sizeof(levelStatsLabel)/sizeof(levelStatsLabel[0]))
+
+//
+// M_DrawSlices
+// Draws a pieced-together label, false if the stock gfx were replaced.
+//
+static boolean M_DrawSlices(int x, int y, menuslice_t* sl, int count)
+{
+    int		i;
+    patch_t*	patch;
+
+    for (i=0 ; i<count ; i++)
+    {
+	if (W_CheckNumForName(sl[i].lump) < 0)
+	    return false;
+	patch = W_CacheLumpName(sl[i].lump, PU_CACHE);
+	if (SWAPSHORT(patch->width) != sl[i].lumpwidth)
+	    return false;
+    }
+
+    for (i=0 ; i<count ; i++)
+    {
+	patch = W_CacheLumpName(sl[i].lump, PU_CACHE);
+	V_DrawPatchColsInDirect(x, y, 0, patch, sl[i].col0, sl[i].col1);
+	x += sl[i].col1 - sl[i].col0 + sl[i].gap;
+    }
+    return true;
+}
+
 
 void M_DrawOptions(void)
 {
-    V_DrawPatchInDirect (108,15,0,W_CacheLumpName("M_OPTTTL",PU_CACHE));
+    V_DrawPatchInDirect (108,4,0,W_CacheLumpName("M_OPTTTL",PU_CACHE));
 
     V_DrawPatchInDirect (OptionsDef.x + 175,OptionsDef.y+LINEHEIGHT*detail,0,
 		       W_CacheLumpName(detailNames[detailLevel],PU_CACHE));
 
     V_DrawPatchInDirect (OptionsDef.x + 120,OptionsDef.y+LINEHEIGHT*messages,0,
 		       W_CacheLumpName(msgNames[showMessages],PU_CACHE));
+
+    if (M_DrawSlices(OptionsDef.x,OptionsDef.y+LINEHEIGHT*levelstats,
+		     levelStatsLabel,NUMLEVELSTATSSLICES))
+	V_DrawPatchInDirect (OptionsDef.x + 150,OptionsDef.y+LINEHEIGHT*levelstats,0,
+			   W_CacheLumpName(msgNames[hud_levelstats],PU_CACHE));
+    else
+    {
+	M_WriteText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*levelstats+4,"LEVEL STATS:");
+	M_WriteText(OptionsDef.x + 150,OptionsDef.y+LINEHEIGHT*levelstats+4,
+		    hud_levelstats ? "ON" : "OFF");
+    }
 
     M_DrawThermo(OptionsDef.x,OptionsDef.y+LINEHEIGHT*(mousesens+1),
 		 10,mouseSensitivity);
@@ -1045,6 +1114,17 @@ void M_ChangeMessages(int choice)
 	players[consoleplayer].message = MSGON ;
 
     message_dontfuckwithme = true;
+}
+
+
+//
+//      Toggle level stats widget on/off
+//
+void M_ChangeLevelStats(int choice)
+{
+    // warning: unused parameter `int choice'
+    choice = 0;
+    hud_levelstats = !hud_levelstats;
 }
 
 

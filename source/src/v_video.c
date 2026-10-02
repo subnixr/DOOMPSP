@@ -228,6 +228,21 @@ V_DrawPatch
   int		scrn,
   patch_t*	patch )
 {
+    V_DrawPatchTranslated (x, y, scrn, patch, NULL);
+}
+
+//
+// V_DrawPatchTranslated
+// Like V_DrawPatch, remapping colors through xlat (NULL = none).
+//
+void
+V_DrawPatchTranslated
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  byte*		xlat )
+{
 
     int		count;
     int		col;
@@ -271,10 +286,21 @@ V_DrawPatch
 	    dest = desttop + column->topdelta*SCREENWIDTH;
 	    count = column->length;
 
-	    while (count--)
+	    if (xlat)
 	    {
-		*dest = *source++;
-		dest += SCREENWIDTH;
+		while (count--)
+		{
+		    *dest = xlat[*source++];
+		    dest += SCREENWIDTH;
+		}
+	    }
+	    else
+	    {
+		while (count--)
+		{
+		    *dest = *source++;
+		    dest += SCREENWIDTH;
+		}
 	    }
 	    column = (column_t *)(  (byte *)column + column->length
 				    + 4 );
@@ -373,6 +399,25 @@ V_DrawPatchInDirect
   int		scrn,
   patch_t*	patch	)
 {
+  V_DrawPatchColsInDirect (x - SWAPSHORT(patch->leftoffset), y, scrn, patch,
+			   0, SWAPSHORT(patch->width) - 1);
+}
+
+//
+// V_DrawPatchColsInDirect
+// Stretches only columns col0..col1 of a patch, drawn with col0 at x
+// (320x200 coords, leftoffset ignored). Used to build menu labels
+// out of pieces of other menu graphics.
+//
+void
+V_DrawPatchColsInDirect
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  int		col0,
+  int		col1 )
+{
     int		count;
     int		col;
     column_t*	column;
@@ -383,16 +428,18 @@ V_DrawPatchInDirect
     int		x0;
 
   int deltax,deltay,deltaxi,deltayi,stretchx,stretchy;
-  int srccol,collen;
+  int srccol;
 
   y -= SWAPSHORT(patch->topoffset);
-  x -= SWAPSHORT(patch->leftoffset);
+  w = col1 - col0 + 1;
 
 #ifdef RANGECHECK
   if (x<0
-      ||x+SWAPSHORT(patch->width)>320
+      ||x+w>320
       || y<0
       || y+SWAPSHORT(patch->height)>200
+      || col0<0
+      || col1>=SWAPSHORT(patch->width)
       || (unsigned)scrn>4)
     {
 	printf("Patch at %d,%d exceeds LFB\n", x,y );
@@ -413,16 +460,16 @@ V_DrawPatchInDirect
   col = 0;
   desttop = screens[scrn]+stretchy*SCREENWIDTH+stretchx;
 
-  w = SWAPSHORT(patch->width)<<16;
+  w <<= 16;
 
   for ( ; col < w; x++, col += deltaxi, desttop++) {
-    column = (column_t *)((byte *)patch + SWAPLONG(patch->columnofs[col>>16]));
+    column = (column_t *)((byte *)patch + SWAPLONG(patch->columnofs[col0 + (col>>16)]));
 
     // step through the posts in a column
     while (column->topdelta != 0xff ) {
       source = (byte *)column +	3;
       dest = desttop+((column->topdelta*deltay)>>16)*SCREENWIDTH;
-      collen = count = (column->length*deltay)>>16;
+      count = (column->length*deltay)>>16;
       srccol = 0;
       while (count--) {
         *dest = source[srccol>>16];
@@ -433,7 +480,7 @@ V_DrawPatchInDirect
     }
   }
   if (scrn == 0)
-      I_MarkRect (x0, y, SWAPSHORT(patch->width), SWAPSHORT(patch->height));
+      I_MarkRect (x0, y, col1 - col0 + 1, SWAPSHORT(patch->height));
 }
 
 

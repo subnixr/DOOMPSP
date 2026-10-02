@@ -276,6 +276,7 @@ extern int	viewheight;
 
 extern int	mouseSensitivity;
 extern int	showMessages;
+extern int	hud_levelstats;
 
 extern int	detailLevel;
 
@@ -317,6 +318,7 @@ default_t	defaults[] =
     {"sfx_volume",&snd_SfxVolume, 8},
     {"music_volume",&snd_MusicVolume, 8},
     {"show_messages",&showMessages, 1},
+    {"hud_levelstats",&hud_levelstats, 1},
 
 
 #ifdef NORMALUNIX

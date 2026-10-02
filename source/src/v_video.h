@@ -76,6 +76,14 @@ V_DrawPatch
   patch_t*	patch);
 
 void
+V_DrawPatchTranslated
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  byte*		xlat );
+
+void
 V_DrawPatchDirect
 ( int		x,
   int		y,
@@ -89,6 +97,15 @@ V_DrawPatchInDirect
   int		y,
   int		scrn,
   patch_t*	patch	);
+
+void	//stretches columns col0..col1 of bitmap
+V_DrawPatchColsInDirect
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  int		col0,
+  int		col1 );
 
 void	//stretches bitmap to fill screen
 V_DrawPatchInDirectFlipped
