@@ -28,12 +28,14 @@ rcsid[] = "$Id: st_stuff.c,v 1.6 1997/02/03 22:45:13 b1 Exp $";
 
 
 #include <stdio.h>
+#include <string.h>
 
 #include "i_system.h"
 #include "i_video.h"
 #include "z_zone.h"
 #include "m_random.h"
 #include "w_wad.h"
+#include "m_swap.h"
 
 #include "doomdef.h"
 
@@ -335,8 +337,11 @@ static patch_t*         faceback;
  // main bar right
 static patch_t*         armsbg;
 
-// weapon ownership patches
-static patch_t*         arms[6][2];
+// weapon ownership patches (gray, yellow, red)
+static patch_t*         arms[6][3];
+
+// 0 = not owned, 1 = owned, 2 = selected
+static int              st_armsstate[6];
 
 // ready-weapon widget
 static st_number_t      w_ready;
@@ -928,6 +933,27 @@ void ST_updateFaceWidget(void)
 
 }
 
+// used by w_arms[] widgets: selected weapon is drawn red
+void ST_updateArmsState(void)
+{
+    int         i;
+    int         sel;
+
+    sel = plyr->pendingweapon != wp_nochange
+        ? plyr->pendingweapon : plyr->readyweapon;
+
+    if (sel == wp_supershotgun)
+        sel = wp_shotgun;
+
+    for (i=0;i<6;i++)
+    {
+        if (!plyr->weaponowned[i+1])
+            st_armsstate[i] = 0;
+        else
+            st_armsstate[i] = (sel == i+1) ? 2 : 1;
+    }
+}
+
 void ST_updateWidgets(void)
 {
     static int  largeammo = 1994; // means "n/a"
@@ -964,6 +990,8 @@ void ST_updateWidgets(void)
         if (plyr->cards[i+3])
             keyboxes[i] = i+3;
     }
+
+    ST_updateArmsState();
 
     // refresh everything if this is him coming back to life
     ST_updateFaceWidget();
@@ -1128,6 +1156,42 @@ void ST_Drawer (boolean fullscreen, boolean refresh)
 
 }
 
+// Copy of a short yellow number (STYSNUM) with the yellow
+//  (palette 160) remapped to the red of the tall numbers (palette 181).
+static patch_t* ST_makeRedPatch(patch_t* src, int len)
+{
+    patch_t*    patch;
+    column_t*   column;
+    byte*       pixel;
+    int         col;
+    int         count;
+
+    patch = (patch_t *) Z_Malloc(len, PU_STATIC, 0);
+    memcpy(patch, src, len);
+
+    for (col=0 ; col<SWAPSHORT(patch->width) ; col++)
+    {
+        column = (column_t *)((byte *)patch + SWAPLONG(patch->columnofs[col]));
+
+        // step through the posts in a column
+        while (column->topdelta != 0xff)
+        {
+            pixel = (byte *)column + 3;
+            count = column->length;
+
+            while (count--)
+            {
+                if (*pixel == 160)
+                    *pixel = 181;
+                pixel++;
+            }
+            column = (column_t *)((byte *)column + column->length + 4);
+        }
+    }
+
+    return patch;
+}
+
 void ST_loadGraphics(void)
 {
 
@@ -1171,6 +1235,11 @@ void ST_loadGraphics(void)
 
         // yellow #
         arms[i][1] = shortnum[i+2];
+
+        // red #
+        sprintf(namebuf, "STYSNUM%d", i+2);
+        arms[i][2] = ST_makeRedPatch(shortnum[i+2],
+                                     W_LumpLength(W_GetNumForName(namebuf)));
     }
 
     // face backgrounds for different color players
@@ -1231,6 +1300,10 @@ void ST_unloadGraphics(void)
     // unload gray #'s
     for (i=0;i<6;i++)
         Z_ChangeTag(arms[i][0], PU_CACHE);
+
+    // free red #'s
+    for (i=0;i<6;i++)
+        Z_Free(arms[i][2]);
 
     // unload the key cards
     for (i=0;i<NUMCARDS;i++)
@@ -1326,9 +1399,10 @@ void ST_createWidgets(void)
         STlib_initMultIcon(&w_arms[i],
                            ST_ARMSX+(i%3)*ST_ARMSXSPACE,
                            ST_ARMSY+(i/3)*ST_ARMSYSPACE,
-                           arms[i], (int *) &plyr->weaponowned[i+1],
+                           arms[i], &st_armsstate[i],
                            &st_armson);
     }
+    ST_updateArmsState();
 
     // frags sum
     STlib_initNum(&w_frags,
