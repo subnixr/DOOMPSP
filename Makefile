@@ -1,11 +1,12 @@
 # Build PSP Doom inside the pspdev Docker toolchain.
 #
-#   make            build PARAM.SFO, EBOOT.PBP and dvemgr.prx
+#   make            build PARAM.SFO, EBOOT.PBP, dvemgr.prx and relaunch.prx
 #   make doom       build only EBOOT.PBP
 #   make dvemgr     build only dvemgr.prx
+#   make relaunch   build only relaunch.prx
 #   make sfo        regenerate source/xmb/PARAM.SFO
 #   make snd0       encode source/xmb/bgm.wav to SND0.AT3 (XMB music)
-#   make clean      remove build artifacts and root EBOOT.PBP/dvemgr.prx
+#   make clean      remove build artifacts and root EBOOT.PBP/*.prx
 #   make shell      interactive shell in the toolchain container
 #   make pull       pull/update the toolchain image
 #   make deploy     rsync game files to the PSP memory stick (deploy.sh)
@@ -34,9 +35,9 @@ COMPAT_CFLAGS ?= -std=gnu99 -fcommon -Dstrcmpi=strcasecmp -Wno-error=implicit-fu
 RUN = $(DOCKER) run --rm --platform $(PLATFORM) \
       -v "$(CURDIR)":/src -w /src $(IMAGE)
 
-.PHONY: all sfo doom dvemgr snd0 clean shell pull deploy run
+.PHONY: all sfo doom dvemgr relaunch snd0 clean shell pull deploy run
 
-all: sfo doom dvemgr
+all: sfo doom dvemgr relaunch
 
 sfo:
 	$(RUN) make -C source/src ../xmb/PARAM.SFO
@@ -48,6 +49,10 @@ doom: $(ASSETS)/SND0.AT3
 dvemgr:
 	$(RUN) make -C source/dvemgr EXTRA_CFLAGS='$(COMPAT_CFLAGS)'
 	mv -f source/dvemgr/dvemgr.prx dvemgr.prx
+
+relaunch:
+	$(RUN) make -C source/relaunch EXTRA_CFLAGS='$(COMPAT_CFLAGS)'
+	mv -f source/relaunch/relaunch.prx relaunch.prx
 
 snd0: $(ASSETS)/SND0.AT3
 
@@ -63,8 +68,8 @@ $(ASSETS)/SND0.AT3: $(ASSETS)/bgm.wav Makefile
 	rm -f $(ASSETS)/.snd0.wav
 
 clean:
-	$(RUN) sh -c 'make -C source/src clean; make -C source/dvemgr clean'
-	rm -f EBOOT.PBP dvemgr.prx $(ASSETS)/SND0.AT3 $(ASSETS)/PARAM.SFO $(ASSETS)/.snd0.wav
+	$(RUN) sh -c 'make -C source/src clean; make -C source/dvemgr clean; make -C source/relaunch clean'
+	rm -f EBOOT.PBP dvemgr.prx relaunch.prx $(ASSETS)/SND0.AT3 $(ASSETS)/PARAM.SFO $(ASSETS)/.snd0.wav
 
 shell:
 	$(DOCKER) run --rm -it --platform $(PLATFORM) \

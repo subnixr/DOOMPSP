@@ -3,6 +3,7 @@
 #include <pspdebug.h>
 #include <psppower.h>
 #include <psploadexec.h>
+#include <kubridge.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,9 +27,11 @@
 #define printf pspDebugScreenPrintf
 
 int pspDveMgrSetVideoOut(int, int, int, int, int, int, int);
+int pspRelaunchSelf(int apitype, const char *path);
 
 extern int psp_use_tv;
 extern char psp_exe_path[];
+extern int psp_relaunch_ok;
 
 typedef unsigned char      uint8_t;
 typedef signed   char      sint8_t;
@@ -269,12 +272,31 @@ void I_Quit (void)
 	if (psp_exe_path[0])
 	{
 		struct SceKernelLoadExecParam param;
+		int kres = 0, ures;
+		char path[256], line[96];
+		int fd, n;
+
+		// real hardware only allows this from kernel mode
+		if (psp_relaunch_ok)
+			kres = pspRelaunchSelf(kuKernelInitApitype(), psp_exe_path);
 
 		param.size = sizeof(param);
 		param.args = strlen(psp_exe_path) + 1;
 		param.argp = psp_exe_path;
 		param.key = NULL;
-		sceKernelLoadExec(psp_exe_path, &param);
+		ures = sceKernelLoadExec(psp_exe_path, &param);
+
+		snprintf(path, sizeof(path), "%slogs", psp_home);
+		sceIoMkdir(path, 0777);
+		snprintf(path, sizeof(path), "%slogs/quit.log", psp_home);
+		fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+		if (fd >= 0)
+		{
+			n = snprintf(line, sizeof(line), "relaunch failed: prx %s, kernel 0x%08X, user 0x%08X\n",
+				psp_relaunch_ok ? "loaded" : "not loaded", kres, ures);
+			sceIoWrite(fd, line, n);
+			sceIoClose(fd);
+		}
 	}
 
 	// relaunch failed: fall back to exiting to the XMB

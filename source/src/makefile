@@ -66,6 +66,7 @@ OBJS3 = \
 	sounds.o \
 	psp_main.o \
 	pspDveManager.o \
+	pspRelaunch.o \
 	reqfile.o \
 	intraFont.o \
 	m_fixed.o \

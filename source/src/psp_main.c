@@ -73,6 +73,7 @@ int VERSION = 110;
 
 char psp_home[256];
 char psp_exe_path[256];
+int psp_relaunch_ok = 0;
 
 int psp_net_available = 0;
 char *psp_net_ipaddr = 0;
@@ -2065,6 +2066,13 @@ int main (int argc, char **argv)
 			if (pspSdkLoadStartModule(str, PSP_MEMORY_PARTITION_KERNEL) >= 0)
 				psp_tv_cable = pspDveMgrCheckVideoOut();
 		}
+
+	// kernel helper so I_Quit can relaunch us; user mode LoadExec is refused on real hardware
+	{
+		char str[256];
+		sprintf(str,"%s%s",psp_home,"relaunch.prx");
+		psp_relaunch_ok = pspSdkLoadStartModule(str, PSP_MEMORY_PARTITION_KERNEL) >= 0;
+	}
 
 	psp_net_init();
 	psp_font_init();

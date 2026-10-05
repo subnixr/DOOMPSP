@@ -20,4 +20,4 @@ source/tools/ATRACTool-Rel-Portable/
 # user data, local scripts
 saves/
 logs/
-deploy.sh
+.doomrc

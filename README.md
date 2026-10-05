@@ -50,7 +50,7 @@ Every slot can be changed or set to none in **Configure > Cheats**.
 3. Run it from the XMB, press START.
 
 ```
-EBOOT.PBP, dvemgr.prx   the program
+EBOOT.PBP, *.prx        the program (dvemgr.prx: TV-out, relaunch.prx: Quit Game to launcher)
 config/                 launcher configs (default.cfg) and Doom's .doomrc
 saves/                  savegames
 midi/                   MIDI_Instruments (rename MIDI_Instruments-alt to use the alternate set)
