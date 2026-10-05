@@ -333,9 +333,68 @@ int get_text_osk(char *input, unsigned short *intext, unsigned short *desc)
  *
  */
 
+// fallback when the system font can't be loaded: the SDK's 8x8 debug font
+// as a 16x16 glyph atlas, drawn through GU like intraFont
+extern unsigned char msx[];
+static u32 __attribute__((aligned(16))) dbgfont_tex[128*128];
+
+static void dbgfont_init(void)
+{
+	int c, row, col;
+
+	for (c = 0; c < 256; c++)
+		for (row = 0; row < 8; row++)
+			for (col = 0; col < 8; col++)
+				dbgfont_tex[((c >> 4) * 8 + row) * 128 + (c & 15) * 8 + col] =
+					(msx[c * 8 + row] & (128 >> col)) ? 0xFFFFFFFF : 0x00FFFFFF;
+	sceKernelDcacheWritebackAll();
+}
+
+static void dbgfont_print(char *text, u32 color, int x, int y)
+{
+	struct { float u, v; u32 c; float x, y, z; } *v;
+	int i, len = strlen(text);
+
+	if (!len)
+		return;
+
+	v = sceGuGetMemory(sizeof(*v) * 2 * len);
+	for (i = 0; i < len; i++)
+	{
+		int c = (unsigned char)text[i];
+
+		v[i*2].u = (c & 15) * 8;
+		v[i*2].v = (c >> 4) * 8;
+		v[i*2].c = color;
+		v[i*2].x = x + i * 7;
+		v[i*2].y = y - 8; // callers pass a baseline
+		v[i*2].z = 0.0f;
+		v[i*2+1].u = v[i*2].u + 8;
+		v[i*2+1].v = v[i*2].v + 8;
+		v[i*2+1].c = color;
+		v[i*2+1].x = v[i*2].x + 8;
+		v[i*2+1].y = v[i*2].y + 8;
+		v[i*2+1].z = 0.0f;
+	}
+
+	sceGuEnable(GU_TEXTURE_2D);
+	sceGuTexMode(GU_PSM_8888, 0, 0, 0);
+	sceGuTexImage(0, 128, 128, 128, dbgfont_tex);
+	sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA);
+	sceGuTexOffset(0.0f, 0.0f);
+	sceGuTexFilter(GU_NEAREST, GU_NEAREST);
+	sceGuEnable(GU_BLEND);      // SetupGu (OSK path) leaves blending off
+	sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+	sceGuDisable(GU_DEPTH_TEST);
+	sceGuDrawArray(GU_SPRITES, GU_TEXTURE_32BITF|GU_COLOR_8888|GU_VERTEX_32BITF|GU_TRANSFORM_2D, len * 2, 0, v);
+	sceGuEnable(GU_DEPTH_TEST);
+}
+
 void psp_font_init(void)
 {
 	ResetGu();
+
+	dbgfont_init();
 
 	intraFontInit();
 
@@ -358,38 +417,32 @@ void psp_net_disconnect(void *arg);
 
 void gui_PrePrint(void)
 {
-	if (psp_use_intrafont)
-	{
-		sceGuStart(GU_DIRECT, list);
+	sceGuStart(GU_DIRECT, list);
 
-		sceGumMatrixMode(GU_PROJECTION);
-		sceGumLoadIdentity();
-		sceGumPerspective( 75.0f, 16.0f/9.0f, 0.5f, 1000.0f);
+	sceGumMatrixMode(GU_PROJECTION);
+	sceGumLoadIdentity();
+	sceGumPerspective( 75.0f, 16.0f/9.0f, 0.5f, 1000.0f);
 
-        sceGumMatrixMode(GU_VIEW);
-		sceGumLoadIdentity();
+	sceGumMatrixMode(GU_VIEW);
+	sceGumLoadIdentity();
 
-		sceGumMatrixMode(GU_MODEL);
-		sceGumLoadIdentity();
+	sceGumMatrixMode(GU_MODEL);
+	sceGumLoadIdentity();
 
-		sceGuClearColor(0xFF000000);
-		sceGuClearDepth(0);
-		sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);
-	}
+	sceGuClearColor(0xFF000000);
+	sceGuClearDepth(0);
+	sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);
 }
 
 void gui_PostPrint(void)
 {
-	if (psp_use_intrafont)
-	{
-        // End drawing
-		sceGuFinish();
-		sceGuSync(0,0);
+	// End drawing
+	sceGuFinish();
+	sceGuSync(0,0);
 
-		// Swap buffers (waiting for vsync)
-		sceDisplayWaitVblankStart();
-		sceGuSwapBuffers();
-	}
+	// Swap buffers (waiting for vsync)
+	sceDisplayWaitVblankStart();
+	sceGuSwapBuffers();
 }
 
 int gui_PrintWidth(char *text)
@@ -408,23 +461,7 @@ void gui_Print(char *text, u32 fc, u32 bc, int x, int y)
 		intraFontPrint(ltn8, x, y, text);
 	}
 	else
-	{
-		static int lasty = -1;
-
-		pspDebugScreenSetTextColor(0xFFFFFFFF);
-		pspDebugScreenSetBackColor(0xFF000000);
-		if (y != lasty)
-		{
-			// erase line if not the same as last print
-			pspDebugScreenSetXY(0, y/8);
-			pspDebugScreenPrintf("                                                                    ");
-			lasty = y;
-		}
-		pspDebugScreenSetTextColor(fc);
-		pspDebugScreenSetBackColor(bc);
-		pspDebugScreenSetXY(x/7, y/8);
-		pspDebugScreenPrintf("%s", text);
-	}
+		dbgfont_print(text, fc, x, y);
 }
 
 // XMB-style highlight: translucent white bar behind the selected row,
@@ -435,9 +472,6 @@ void gui_Highlight(int x0, int x1, int y)
 	u32 a, c0, c1;
 	int xs[4], k;
 	float ph;
-
-	if (!psp_use_intrafont)
-		return;
 
 	if (x0 < 0) x0 = 0;
 	if (x1 > 480) x1 = 480;
@@ -482,14 +516,6 @@ char *RequestString (char *initialStr)
 			intext[i] = (unsigned short)initialStr[i];
 
 	ok = get_text_osk(str, intext, desc);
-
-	if (!psp_use_intrafont)
-	{
-		pspDebugScreenInit();
-		pspDebugScreenSetBackColor(0xFF000000);
-		pspDebugScreenSetTextColor(0xFFFFFFFF);
-		pspDebugScreenClear();
-	}
 
 	if (ok)
 		return str;

@@ -38,13 +38,14 @@ unsigned long intraFontGetV(unsigned long n, unsigned char *p, unsigned long *b)
 
 unsigned long* intraFontGetTable(FILE *file, unsigned long n_elements, unsigned long bp_element) {
 	unsigned long len_table = ((n_elements*bp_element+31)/32)*4;
-	unsigned char *raw_table = (unsigned char*)malloc(len_table*sizeof(unsigned char));
+	//empty tables are valid (e.g. fonts without shadows): allocate at least 1 and skip the read
+	unsigned char *raw_table = (unsigned char*)malloc((len_table?len_table:1)*sizeof(unsigned char));
 	if (raw_table == NULL) return NULL;
-	if (fread(raw_table, len_table*sizeof(unsigned char), 1, file) != 1) {
+	if (len_table && fread(raw_table, len_table*sizeof(unsigned char), 1, file) != 1) {
 		free(raw_table);
 		return NULL;
 	}
-	unsigned long *table = (unsigned long*)malloc(n_elements*sizeof(unsigned long));
+	unsigned long *table = (unsigned long*)malloc((n_elements?n_elements:1)*sizeof(unsigned long));
 	if (table == NULL) {
 		free(raw_table);
 		return NULL;
@@ -227,9 +228,12 @@ intraFont* intraFontLoad(const char *filename) {
     font->color = 0xFFFFFFFF;        //non-transparent white
     font->shadowColor = 0xFF000000;  //non-transparent black
 
+	font->fontdata = NULL;           //intraFontUnload frees it on early errors
+
 	font->filename = (char*)malloc((strlen(filename)+1)*sizeof(char));
 	font->glyph = (Glyph*)malloc(font->n_chars*sizeof(Glyph));
-	font->shadowGlyph = (Glyph*)malloc(font->n_shadows*sizeof(Glyph));
+	//always keep one (empty) shadow glyph, so fonts without shadows can be printed
+	font->shadowGlyph = (Glyph*)calloc(font->n_shadows?font->n_shadows:1, sizeof(Glyph));
 	font->charmap_compr = (unsigned short*)malloc(font->charmap_compr_len*sizeof(unsigned short)*2);
 	font->charmap = (unsigned short*)malloc(header.charmap_len*sizeof(unsigned short));
 	font->texture = (unsigned char*)malloc(font->texWidth*font->texHeight>>1);
@@ -456,13 +460,14 @@ int intraFontPrintUCS2(intraFont *font, float x, float y, const unsigned short *
 		if (char_id >= font->n_chars) char_id = 0;
 
 		Glyph *glyph = &(font->glyph[char_id]);
-		Glyph *shadowGlyph = &(font->shadowGlyph[font->glyph[char_id].shadowID]);
+		unsigned short shadow_id = (glyph->shadowID < font->n_shadows) ? glyph->shadowID : 0;
+		Glyph *shadowGlyph = &(font->shadowGlyph[shadow_id]);
 
 		if (!(glyph->flags & PGF_CACHED)) {
 			intraFontGetBMP(font,char_id,PGF_CHARGLYPH);
 		}
 		if (!(shadowGlyph->flags & PGF_CACHED)) {
-			intraFontGetBMP(font,glyph->shadowID,PGF_SHADOWGLYPH);
+			intraFontGetBMP(font,shadow_id,PGF_SHADOWGLYPH);
 		}
 
 		v0 = &v[((length+i)<<1) + 0];
