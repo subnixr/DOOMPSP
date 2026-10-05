@@ -1,7 +1,9 @@
-deh/
+deh/*
+!deh/.gitkeep
 iwad/*
 !iwad/doom1.wad
-pwad/
+pwad/*
+!pwad/.gitkeep
 
 # build artifacts
 source/**/*.o
