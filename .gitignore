@@ -2,6 +2,9 @@ deh/*
 !deh/.gitkeep
 iwad/*
 !iwad/doom1.wad
+!iwad/freedoom1.wad
+!iwad/freedoom2.wad
+!iwad/freedm.wad
 pwad/*
 !pwad/.gitkeep
 

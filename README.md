@@ -46,7 +46,7 @@ Every slot can be changed or set to none in **Configure > Cheats**.
 ## Quick start
 
 1. Copy this folder to `PSP/GAME/` on the memory stick.
-2. Put a main WAD in `iwad/`. Shareware `doom1.wad` is included.
+2. Put a main WAD in `iwad/`. Shareware `doom1.wad` and [Freedoom](https://freedoom.github.io/) 0.13.0 (`freedoom1.wad`, `freedoom2.wad`, `freedm.wad`) are included.
 3. Run it from the XMB, press START.
 
 ```
@@ -91,9 +91,12 @@ Main WADs are identified by file name:
 | The Ultimate DOOM | `doomu.wad` |
 | Doom II | `doom2.wad` |
 | Final Doom: Plutonia / TNT | `plutonia.wad` / `tnt.wad` |
+| Freedoom: Phase 1 (Ultimate DOOM layout) | `freedoom1.wad` |
+| Freedoom: Phase 2 / FreeDM (Doom II layout) | `freedoom2.wad` / `freedm.wad` |
 
+- Freedoom is © Contributors to the Freedoom project, distributed under the BSD licence in [LICENSE.freedoom](LICENSE.freedoom).
 - Patch WADs go in `pwad/`, DeHackEd `.deh` files in `deh/`. You can load up to four of each.
-- These don't work: PlayStation WADs, Heretic/Hexen, FreeDoom (it needs BOOM), and broken WADs with empty maps. Broken WADs show an error instead of crashing.
+- These don't work: PlayStation WADs, Heretic/Hexen, and broken WADs with empty maps. Broken WADs show an error instead of crashing.
 
 ## Networking
 
@@ -153,6 +156,8 @@ Original history:
 ### License
 
 Doom PSP is released under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE). It is based on id Software's DOOM source, which id released under the GPL (version 2 or later) in 1999.
+
+The bundled Freedoom WADs (`freedoom1.wad`, `freedoom2.wad`, `freedm.wad`) are under their own BSD licence. See [LICENSE.freedoom](LICENSE.freedoom).
 
 These third-party components keep their own terms:
 

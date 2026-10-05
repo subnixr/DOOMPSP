@@ -947,7 +947,9 @@ void ST_updateArmsState(void)
 
     for (i=0;i<6;i++)
     {
-        if (!plyr->weaponowned[i+1])
+        // slot 3 is shared: the super shotgun can be owned without the shotgun
+        if (!plyr->weaponowned[i+1]
+            && !(i+1 == wp_shotgun && plyr->weaponowned[wp_supershotgun]))
             st_armsstate[i] = 0;
         else
             st_armsstate[i] = (sel == i+1) ? 2 : 1;

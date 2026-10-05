@@ -692,7 +692,28 @@ void IdentifyVersion (void)
       return;
     }
 
+	if (!strcasecmp(wadname, "freedoom2.wad"))
+    {
+      gamemode = commercial;
+      D_AddFile (doomwad);
+      return;
+    }
+
+	if (!strcasecmp(wadname, "freedm.wad"))
+    {
+      gamemode = commercial;
+      D_AddFile (doomwad);
+      return;
+    }
+
 	if (!strcasecmp(wadname, "doomu.wad"))
+    {
+      gamemode = retail;
+      D_AddFile (doomwad);
+      return;
+    }
+
+	if (!strcasecmp(wadname, "freedoom1.wad"))
     {
       gamemode = retail;
       D_AddFile (doomwad);

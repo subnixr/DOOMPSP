@@ -40,6 +40,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <math.h>
 
 #include <pspsdk.h>
@@ -72,6 +73,8 @@ int pspDveMgrSetVideoOut(int, int, int, int, int, int, int);
 int VERSION = 110;
 
 char psp_home[256];
+// room for psp_home plus a subdir and file name
+#define PSP_PATH_MAX 512
 char psp_exe_path[256];
 int psp_relaunch_ok = 0;
 
@@ -1044,8 +1047,9 @@ void do_gui(struct gui_menu *menu, void *menufn, int toplevel)
 void set_myargv(void);
 void get_myargv(void);
 static int psp_file_exists(const char *path);
+static char *psp_find_file(const char *dir, const char *name);
 
-char psp_cfg_status[300] = "(none)"; // path of current config file
+char psp_cfg_status[PSP_PATH_MAX] = "(none)"; // path of current config file
 
 void psp_load_defaults()
 {
@@ -1088,7 +1092,7 @@ void psp_load_config(void *arg)
 {
 	int i;
 	char *req;
-	char dir[256];
+	char dir[PSP_PATH_MAX];
 	FILE *handle;
 	char temp[256];
 
@@ -1163,7 +1167,7 @@ void psp_save_config(void *arg)
 	if (ok && filename[0])
 	{
 		FILE *handle;
-		char temp[256];
+		char temp[PSP_PATH_MAX];
 
 		// no extension given: add .cfg
 		snprintf(temp, sizeof(temp), "%sconfig/%s%s", psp_home, filename,
@@ -1705,14 +1709,14 @@ void psp_gui(void)
 	};
 
 	FILE *temp;
-	char str[256];
+	char str[PSP_PATH_MAX];
 
 	// start by setting some of the enables that depend on certain variables
 	VideoLevel[1].enable = (psp_tv_cable > 0) ? GUI_ENABLED : GUI_DISABLED;
 	VideoLevel[2].enable = (psp_tv_cable > 0) ? GUI_ENABLED : GUI_DISABLED;
 	TvLevel[4].enable = (psp_tv_cable == 2) ? GUI_ENABLED : GUI_DISABLED;
 	psp_tv_laced = (psp_tv_cable == 1) ? 1 : 0; // force laced if composite cable
-	sprintf(str,"%s%s",psp_home,"midi/MIDI_Instruments");
+	snprintf(str,sizeof(str),"%s%s",psp_home,"midi/MIDI_Instruments");
 	temp = fopen(str, "rb");
 	psp_music_enabled = temp ? 1 : 0;
 	SoundLevel[2].enable = temp ? GUI_ENABLED : GUI_DISABLED;
@@ -2093,15 +2097,13 @@ int main (int argc, char **argv)
 		// no (valid) IWAD in config: pick first one found in <home>iwad/,
 		// full versions before shareware
 		static const char *iwads[] = { "doom2.wad", "plutonia.wad", "tnt.wad",
-			"doomu.wad", "doom.wad", "doom1.wad", "DOOM1.WAD", 0 };
+			"doomu.wad", "doom.wad", "freedoom2.wad", "freedoom1.wad",
+			"doom1.wad", "freedm.wad", 0 };
 		char temp[256];
 
+		snprintf(temp, sizeof(temp), "%siwad", psp_home);
 		for (i = 0; iwads[i] && !psp_iwad_file; i++)
-		{
-			snprintf(temp, sizeof(temp), "%siwad/%s", psp_home, iwads[i]);
-			if (psp_file_exists(temp))
-				psp_iwad_file = strdup(temp);
-		}
+			psp_iwad_file = psp_find_file(temp, iwads[i]);
 	}
 
 	psp_gui();
@@ -2169,6 +2171,12 @@ int isIWADDoom2 (void)
         return 1;
 
 	if (!strcasecmp(wadname, "tnt.wad"))
+        return 1;
+
+	if (!strcasecmp(wadname, "freedoom2.wad"))
+        return 1;
+
+	if (!strcasecmp(wadname, "freedm.wad"))
         return 1;
 
 	return 0;
@@ -2743,6 +2751,29 @@ static int psp_file_exists(const char *path)
 	return hnd != NULL;
 }
 
+// Look for name in dir ignoring case (host filesystems under PPSSPP are
+// case sensitive, the memory stick is not). Returns a malloc'd path or 0.
+static char *psp_find_file(const char *dir, const char *name)
+{
+	DIR *dp;
+	struct dirent *de;
+	char *found = 0;
+
+	if (!(dp = opendir(dir)))
+		return 0;
+
+	while (!found && (de = readdir(dp)))
+		if (!strcasecmp(de->d_name, name))
+		{
+			found = malloc(strlen(dir) + strlen(de->d_name) + 2);
+			if (found)
+				sprintf(found, "%s/%s", dir, de->d_name);
+		}
+
+	closedir(dp);
+	return found;
+}
+
 // Config files store absolute paths, which go stale when the game dir
 // moves (e.g. ms0: <-> ef0:). If a file is missing, look for the same
 // name in <home><subdir>/; if that fails too, drop it.
@@ -2756,10 +2787,11 @@ static void psp_fix_path(char **file, const char *subdir)
 
 	base = strrchr(*file, '/');
 	base = base ? base + 1 : *file;
-	snprintf(temp, sizeof(temp), "%s%s/%s", psp_home, subdir, base);
+	snprintf(temp, sizeof(temp), "%s%s", psp_home, subdir);
+	base = psp_find_file(temp, base);
 
 	free(*file);
-	*file = psp_file_exists(temp) ? strdup(temp) : 0;
+	*file = base;
 }
 
 void get_myargv(void)
