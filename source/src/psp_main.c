@@ -657,6 +657,14 @@ static int gui_start_requested = 0;
 
 void psp_save_config(void *arg);
 
+// path relative to the game dir, for display (unchanged if outside it)
+static const char *psp_rel_path(const char *path)
+{
+	size_t len = strlen(psp_home);
+
+	return (len && !strncmp(path, psp_home, len)) ? path + len : path;
+}
+
 void psp_gui_start(void *arg)
 {
 	gui_start_requested = 1;
@@ -965,7 +973,7 @@ void do_gui(struct gui_menu *menu, void *menufn, int toplevel)
 					strcat(line, " : ");
 				else if (!*(int *)menu[i].field1)
 					strcat(line, "(none)"); // unlabeled path row
-				strncat(line, *(int *)menu[i].field1 ? *(char **)menu[i].field1 : "", sizeof(line) - strlen(line) - 1);
+				strncat(line, *(int *)menu[i].field1 ? psp_rel_path(*(char **)menu[i].field1) : "", sizeof(line) - strlen(line) - 1);
 				break;
 				case GUI_STRING:
 				strcat(line, " : ");
@@ -1040,56 +1048,294 @@ void do_gui(struct gui_menu *menu, void *menufn, int toplevel)
 }
 
 void set_myargv(void);
-void get_myargv(void);
 static int psp_file_exists(const char *path);
 static char *psp_find_file(const char *dir, const char *name);
+static void psp_fix_path(char **file, const char *subdir);
 
-char psp_cfg_status[PSP_PATH_MAX] = "(none)"; // path of current config file
+char psp_cfg_status[PSP_PATH_MAX] = "(none)"; // path of current config file, relative to the game dir
 
-void psp_load_defaults()
+// Launcher config: an INI file ("[section]", "key = value", "#" comments)
+// mapped onto the launcher variables by cfg_table, which drives both
+// loading and saving.
+enum { CFG_INT, CFG_ENUM, CFG_PATH };
+
+struct cfg_entry {
+	const char *section;
+	const char *key;
+	int type;
+	void *ptr;			// int *, or char ** for CFG_PATH
+	const char **names;	// CFG_ENUM: value names, by index; CFG_PATH: { subdir }
+	int def;			// value when the file doesn't set it
+};
+
+static const char *cfg_output_names[] = { "lcd", "tv", 0 };
+static const char *cfg_lcd_res_names[] = { "480x272", "368x272", "320x240", 0 };
+static const char *cfg_tv_res_names[] = { "720x480", "704x448", "640x400", 0 };
+static const char *cfg_music_rate_names[] = { "140", "70", "35", 0 };
+static const char *cfg_cpu_names[] = { "default", "133", "222", "266", "300", "333", 0 };
+static const char *cfg_mode_names[] = { "coop", "deathmatch", "altdeath", 0 };
+static const char *cfg_skill_names[] = { "1", "2", "3", "4", "5", 0 };
+static const char *cfg_iwad_dir[] = { "iwad" };
+static const char *cfg_pwad_dir[] = { "pwad" };
+static const char *cfg_deh_dir[] = { "deh" };
+
+static struct cfg_entry cfg_table[] = {
+	{ "video", "output", CFG_ENUM, &psp_use_tv, cfg_output_names, 0 },
+	{ "video", "lcd_res", CFG_ENUM, &psp_lcd_res, cfg_lcd_res_names, 0 },
+	{ "video", "lcd_vsync", CFG_INT, &psp_lcd_sync, 0, 0 },
+	{ "video", "lcd_widescreen", CFG_INT, &psp_lcd_aspect, 0, 0 },
+	{ "video", "lcd_lowdetail", CFG_INT, &psp_lcd_detail, 0, 0 },
+	{ "video", "tv_res", CFG_ENUM, &psp_tv_res, cfg_tv_res_names, 0 },
+	{ "video", "tv_vsync", CFG_INT, &psp_tv_sync, 0, 0 },
+	{ "video", "tv_interlaced", CFG_INT, &psp_tv_laced, 0, 1 },
+	{ "video", "tv_widescreen", CFG_INT, &psp_tv_aspect, 0, 0 },
+	{ "video", "tv_lowdetail", CFG_INT, &psp_tv_detail, 0, 0 },
+	{ "video", "tv_cx", CFG_INT, &psp_tv_cx, 0, 0 },
+	{ "video", "tv_cy", CFG_INT, &psp_tv_cy, 0, 0 },
+
+	{ "sound", "sfx", CFG_INT, &psp_sfx_enabled, 0, 1 },
+	{ "sound", "music", CFG_INT, &psp_music_enabled, 0, 1 },
+	{ "sound", "music_rate", CFG_ENUM, &psp_snd_upd, cfg_music_rate_names, 0 },
+
+	{ "system", "cpu", CFG_ENUM, &psp_cpu_speed, cfg_cpu_names, 0 },
+
+	{ "files", "iwad", CFG_PATH, &psp_iwad_file, cfg_iwad_dir, 0 },
+	{ "files", "pwad1", CFG_PATH, &psp_pwad_file1, cfg_pwad_dir, 0 },
+	{ "files", "pwad2", CFG_PATH, &psp_pwad_file2, cfg_pwad_dir, 0 },
+	{ "files", "pwad3", CFG_PATH, &psp_pwad_file3, cfg_pwad_dir, 0 },
+	{ "files", "pwad4", CFG_PATH, &psp_pwad_file4, cfg_pwad_dir, 0 },
+	{ "files", "deh1", CFG_PATH, &psp_deh_file1, cfg_deh_dir, 0 },
+	{ "files", "deh2", CFG_PATH, &psp_deh_file2, cfg_deh_dir, 0 },
+	{ "files", "deh3", CFG_PATH, &psp_deh_file3, cfg_deh_dir, 0 },
+	{ "files", "deh4", CFG_PATH, &psp_deh_file4, cfg_deh_dir, 0 },
+
+	{ "game", "mode", CFG_ENUM, &psp_game_deathmatch, cfg_mode_names, 0 },
+	{ "game", "skill", CFG_ENUM, &psp_game_skill, cfg_skill_names, 2 },
+	{ "game", "map", CFG_INT, &psp_game_level, 0, 1 },
+	{ "game", "nomonsters", CFG_INT, &psp_game_nomonsters, 0, 0 },
+	{ "game", "respawn", CFG_INT, &psp_game_respawn, 0, 0 },
+	{ "game", "fast", CFG_INT, &psp_game_fast, 0, 0 },
+	{ "game", "turbo", CFG_INT, &psp_game_turbo, 0, 0 },
+	{ "game", "timer", CFG_INT, &psp_game_timer, 0, 0 },
+	{ "game", "map_on_hud", CFG_INT, &psp_game_maponhu, 0, 0 },
+	{ "game", "rotate_map", CFG_INT, &psp_game_rotatemap, 0, 0 },
+	{ "game", "record_demo", CFG_INT, &psp_game_record, 0, 0 },
+	{ "game", "play_demo", CFG_INT, &psp_game_playdemo, 0, 0 },
+	{ "game", "time_demo", CFG_INT, &psp_game_timedemo, 0, 0 },
+	{ "game", "force_demo", CFG_INT, &psp_game_forcedemo, 0, 0 },
+
+	{ "controls", "analog_cx", CFG_INT, &psp_stick_cx, 0, 128 },
+	{ "controls", "analog_cy", CFG_INT, &psp_stick_cy, 0, 128 },
+	{ "controls", "analog_minx", CFG_INT, &psp_stick_minx, 0, 0 },
+	{ "controls", "analog_miny", CFG_INT, &psp_stick_miny, 0, 0 },
+	{ "controls", "analog_maxx", CFG_INT, &psp_stick_maxx, 0, 255 },
+	{ "controls", "analog_maxy", CFG_INT, &psp_stick_maxy, 0, 255 },
+	{ "controls", "swap_move", CFG_INT, &psp_ctrl_swapmove, 0, 0 },
+	{ "controls", "swap_turn", CFG_INT, &psp_ctrl_swapturn, 0, 0 },
+	{ "controls", "always_run", CFG_INT, &psp_ctrl_run, 0, 0 },
+
+	{ "cheats", "slot1", CFG_INT, &psp_ctrl_cheat[0], 0, 3 },
+	{ "cheats", "slot2", CFG_INT, &psp_ctrl_cheat[1], 0, 12 },
+	{ "cheats", "slot3", CFG_INT, &psp_ctrl_cheat[2], 0, 2 },
+	{ "cheats", "slot4", CFG_INT, &psp_ctrl_cheat[3], 0, 1 },
+	{ "cheats", "slot5", CFG_INT, &psp_ctrl_cheat[4], 0, 9 },
+	{ "cheats", "slot6", CFG_INT, &psp_ctrl_cheat[5], 0, 11 },
+	{ "cheats", "slot7", CFG_INT, &psp_ctrl_cheat[6], 0, 7 },
+	{ "cheats", "slot8", CFG_INT, &psp_ctrl_cheat[7], 0, 8 },
+	{ "cheats", "slot9", CFG_INT, &psp_ctrl_cheat[8], 0, 10 },
+	{ "cheats", "slot10", CFG_INT, &psp_ctrl_cheat[9], 0, 5 },
+	{ "cheats", "slot11", CFG_INT, &psp_ctrl_cheat[10], 0, 6 },
+	{ "cheats", "slot12", CFG_INT, &psp_ctrl_cheat[11], 0, 4 },
+
+	{ "network", "extratic", CFG_INT, &psp_net_extratic, 0, 0 },
+
+	{ 0 }
+};
+
+// strips blanks and the line end, in place
+static char *cfg_trim(char *s)
 {
-	static const char *cfgnames[] = { "config/default.cfg", "default.set", "doom.set" };
-	int i;
-	FILE *handle = NULL;
-	char temp[256];
+	char *end;
 
-	// try config/default.cfg first, fall back to legacy default.set/doom.set;
-	// each in the launch dir, then relative to the current dir
-	for (i = 0; i < 6 && handle == NULL; i++)
+	while (*s == ' ' || *s == '\t')
+		s++;
+	end = s + strlen(s);
+	while (end > s && strchr(" \t\r\n", end[-1]))
+		end--;
+	*end = 0;
+	return s;
+}
+
+static void cfg_set(struct cfg_entry *e, char *value)
+{
+	int i;
+	char temp[PSP_PATH_MAX];
+
+	// a path may hold a '#', anything else may be followed by a comment
+	if (e->type != CFG_PATH && strchr(value, '#'))
 	{
-		strcpy(temp, (i & 1) ? "" : psp_home);
-		strcat(temp, cfgnames[i >> 1]);
-		handle = fopen (temp, "r");
+		*strchr(value, '#') = 0;
+		value = cfg_trim(value);
 	}
-	if (handle == NULL)
+	if (!value[0])
 		return;
 
-	snprintf(psp_cfg_status, sizeof(psp_cfg_status), "%s", temp);
-
-	for (i = 0 ; i < MAXARGVS; i++)
+	switch (e->type)
 	{
-		temp[0] = 0;
-		fgets(temp, 255, handle);
-		printf(" %d : %s", i, temp);
-		if (temp[0] == 0)
-			break;
-		temp[strlen(temp) - 1] = 0;
-		myargv[i] = strdup(temp);
+		case CFG_INT:
+		// not a number (old style config, typo): keep the default
+		if (sscanf(value, "%d", &i) == 1)
+			*(int *)e->ptr = i;
+		break;
+		case CFG_ENUM:
+		for (i = 0; e->names[i]; i++)
+			if (!strcasecmp(value, e->names[i]))
+				*(int *)e->ptr = i;
+		break;
+		case CFG_PATH:
+		// no device or leading slash: relative to the game dir
+		if (!strchr(value, ':') && value[0] != '/')
+		{
+			snprintf(temp, sizeof(temp), "%s%s", psp_home, value);
+			value = temp;
+		}
+		free(*(char **)e->ptr);
+		*(char **)e->ptr = strdup(value);
+		break;
 	}
-	myargc = i;
+}
+
+// Returns 0 if the file can't be opened, leaving the settings alone.
+// Anything not understood in the file is skipped.
+static int psp_cfg_read(const char *path)
+{
+	struct cfg_entry *e;
+	FILE *handle;
+	char line[PSP_PATH_MAX + 64];
+	char section[32] = "";
+	char *key, *value;
+	char *iwad;
+
+	handle = fopen (path, "r");
+	if (handle == NULL)
+		return 0;
+
+	// the file only has to name what differs from the defaults,
+	// except for the IWAD: no (valid) one keeps the current one
+	iwad = psp_iwad_file;
+	psp_iwad_file = 0;
+	for (e = cfg_table; e->key; e++)
+		if (e->type == CFG_PATH)
+		{
+			free(*(char **)e->ptr);
+			*(char **)e->ptr = 0;
+		}
+		else
+			*(int *)e->ptr = e->def;
+
+	while (fgets(line, sizeof(line), handle))
+	{
+		key = cfg_trim(line);
+		if (key[0] == '[' && strchr(key, ']'))
+		{
+			*strchr(key, ']') = 0;
+			snprintf(section, sizeof(section), "%s", cfg_trim(key + 1));
+			continue;
+		}
+		value = strchr(key, '=');
+		if (key[0] == '#' || key[0] == ';' || !value)
+			continue;
+		*value++ = 0;
+		key = cfg_trim(key);
+		for (e = cfg_table; e->key; e++)
+			if (!strcasecmp(section, e->section) && !strcasecmp(key, e->key))
+				cfg_set(e, cfg_trim(value));
+	}
 
 	fclose (handle);
 
-	get_myargv();
+	// paths go stale when the game dir moves or a file is removed
+	for (e = cfg_table; e->key; e++)
+		if (e->type == CFG_PATH)
+			psp_fix_path((char **)e->ptr, e->names[0]);
+
+	if (psp_iwad_file)
+		free(iwad);
+	else
+		psp_iwad_file = iwad;
+
+	// a network game is only started from Join or Host > Start
+	psp_net_enabled = 0;
+
+	return 1;
+}
+
+static int psp_cfg_write(const char *path)
+{
+	struct cfg_entry *e;
+	FILE *handle;
+	const char *section = "";
+	int i;
+
+	handle = fopen (path, "w");
+	if (handle == NULL)
+		return 0;
+
+	fprintf(handle, "# DOOM PSP launcher config\n");
+
+	for (e = cfg_table; e->key; e++)
+	{
+		if (strcmp(section, e->section))
+		{
+			section = e->section;
+			fprintf(handle, "\n[%s]\n", section);
+		}
+
+		switch (e->type)
+		{
+			case CFG_INT:
+			fprintf(handle, "%s = %d\n", e->key, *(int *)e->ptr);
+			break;
+			case CFG_ENUM:
+			// value, then the possible ones as a comment
+			fprintf(handle, "%s = %s  #", e->key, e->names[*(int *)e->ptr]);
+			for (i = 0; e->names[i]; i++)
+				fprintf(handle, "%s %s", i ? " |" : "", e->names[i]);
+			fprintf(handle, "\n");
+			break;
+			case CFG_PATH:
+			// inside the game dir: stored relative to it, so the dir can move
+			fprintf(handle, "%s = %s\n", e->key,
+				*(char **)e->ptr ? psp_rel_path(*(char **)e->ptr) : "");
+			break;
+		}
+	}
+
+	fclose (handle);
+	return 1;
+}
+
+void psp_load_defaults()
+{
+	int i;
+	char temp[PSP_PATH_MAX];
+
+	// config/default.cfg in the launch dir, then relative to the current dir
+	for (i = 0; i < 2; i++)
+	{
+		snprintf(temp, sizeof(temp), "%sconfig/default.cfg", i ? "" : psp_home);
+		if (psp_cfg_read(temp))
+		{
+			snprintf(psp_cfg_status, sizeof(psp_cfg_status), "%s", psp_rel_path(temp));
+			return;
+		}
+	}
 }
 
 void psp_load_config(void *arg)
 {
-	int i;
 	char *req;
 	char dir[PSP_PATH_MAX];
-	FILE *handle;
-	char temp[256];
 
 	snprintf(dir, sizeof(dir), "%sconfig/", psp_home);
 	req = RequestFile(dir);
@@ -1101,41 +1347,16 @@ void psp_load_config(void *arg)
 	pspDebugScreenSetTextColor(0xFFFFFFFF);
 	pspDebugScreenClear();
 
-	// free old argv entries
-	if (myargc)
-		for (i = 0 ; i < myargc; i++)
-		{
-			free(myargv[i]);
-			myargv[i] = 0;
-		}
-	myargc = 0;
-
 	printf("Attempting to load config from %s\n\n", req);
 
-	handle = fopen (req, "r");
-	if (handle == NULL)
+	if (!psp_cfg_read(req))
 	{
 		printf("Error! Couldn't open file %s\n\n", req);
 		sceKernelDelayThread(2*1000*1000);
 		return;
 	}
 
-	for (i = 0 ; i < MAXARGVS; i++)
-	{
-		temp[0] = 0;
-		fgets(temp, 255, handle);
-		printf(" %d : %s", i, temp);
-		if (temp[0] == 0)
-			break;
-		temp[strlen(temp) - 1] = 0;
-		myargv[i] = strdup(temp);
-	}
-	myargc = i;
-
-	fclose (handle);
-
-	get_myargv();
-	snprintf(psp_cfg_status, sizeof(psp_cfg_status), "%s", req);
+	snprintf(psp_cfg_status, sizeof(psp_cfg_status), "%s", psp_rel_path(req));
 
 	printf("\nConfig loaded\n\n");
 	sceKernelDelayThread(3*1000*1000);
@@ -1146,17 +1367,19 @@ void psp_save_config(void *arg)
 {
 	int ok, i;
 	char filename[64];
-	unsigned short intext[128]  = { 'd', 'e', 'f', 'a', 'u', 'l', 't', '.', 'c', 'f', 'g', 0 }; // text already in the edit box on start
+	unsigned short intext[128]  = { 'd', 'e', 'f', 'a', 'u', 'l', 't', 0 }; // text already in the edit box on start
 	unsigned short desc[128]	= { 'E', 'n', 't', 'e', 'r', ' ', 'F', 'i', 'l', 'e', ' ', 'N', 'a', 'm', 'e', 0 }; // description
 	char *slash = strrchr(psp_cfg_status, '/');
 
 	// start with the name of the current config, if it lives in config/
-	// (legacy default.set/doom.set and "(none)" keep default.cfg)
+	// ("(none)" keeps default); .cfg is left out, it's added on save
 	if (slash && slash[1] && slash - psp_cfg_status >= 6 && !strncmp(slash - 6, "config", 6)
 		&& (slash - psp_cfg_status == 6 || slash[-7] == '/'))
 	{
 		for (i = 0; i < 50 && slash[1 + i]; i++)
 			intext[i] = (unsigned char)slash[1 + i];
+		if (i > 4 && !strcasecmp(slash + 1 + i - 4, ".cfg"))
+			i -= 4;
 		intext[i] = 0;
 	}
 
@@ -1172,33 +1395,23 @@ void psp_save_config(void *arg)
 
 	if (ok && filename[0])
 	{
-		FILE *handle;
 		char temp[PSP_PATH_MAX];
 
-		// no extension given: add .cfg
+		// doesn't end in .cfg: add it
+		i = strlen(filename);
 		snprintf(temp, sizeof(temp), "%sconfig/%s%s", psp_home, filename,
-			strchr(filename, '.') ? "" : ".cfg");
+			(i >= 4 && !strcasecmp(filename + i - 4, ".cfg")) ? "" : ".cfg");
 
 		printf("Attempting to save config to %s\n\n", temp);
 
-		handle = fopen (temp, "wb");
-		if (handle == NULL)
+		if (!psp_cfg_write(temp))
 		{
 			printf("Error! Couldn't open file %s\n\n", temp);
 			sceKernelDelayThread(2*1000*1000);
 			return;
 		}
 
-		set_myargv();
-		for (i = 0 ; i < myargc; i++)
-		{
-			fwrite (myargv[i], 1, strlen(myargv[i]), handle);
-			fwrite ("\n", 1, 1, handle);
-		}
-
-		fclose (handle);
-
-		snprintf(psp_cfg_status, sizeof(psp_cfg_status), "%s", temp);
+		snprintf(psp_cfg_status, sizeof(psp_cfg_status), "%s", psp_rel_path(temp));
 		printf("Config saved to %s\n\n", temp);
 		sceKernelDelayThread(2*1000*1000);
 	}
@@ -2920,17 +3133,6 @@ void set_myargv(void)
 	}
 }
 
-int first_argv(char *check)
-{
-    int		i;
-
-    for (i=1; i<myargc; i++)
-		if ( !strcasecmp(check, myargv[i]) )
-		    return i;
-
-    return 0;
-}
-
 static int psp_file_exists(const char *path)
 {
 	FILE *hnd = fopen(path, "rb");
@@ -2962,7 +3164,7 @@ static char *psp_find_file(const char *dir, const char *name)
 	return found;
 }
 
-// Config files store absolute paths, which go stale when the game dir
+// Config files may hold absolute paths, which go stale when the game dir
 // moves (e.g. ms0: <-> ef0:). If a file is missing, look for the same
 // name in <home><subdir>/; if that fails too, drop it.
 static void psp_fix_path(char **file, const char *subdir)
@@ -2980,298 +3182,4 @@ static void psp_fix_path(char **file, const char *subdir)
 
 	free(*file);
 	*file = base;
-}
-
-void get_myargv(void)
-{
-	int i, j;
-
-	psp_use_tv = 0;
-	if (first_argv("-tv"))
-	{
-		psp_use_tv = 1;
-
-		psp_tv_res = 0;
-		i = first_argv("-width");
-		if (i)
-		{
-			sscanf(myargv[i+1], "%d", &j);
-			switch (j)
-			{
-				case 720:
-				psp_tv_res = 0;
-				break;
-				case 704:
-				psp_tv_res = 1;
-				break;
-				case 640:
-				psp_tv_res = 2;
-				break;
-			}
-		}
-
-		psp_tv_sync = 0;
-		if (first_argv("-vsync"))
-			psp_tv_sync = 1;
-
-		psp_tv_laced = 0;
-		if (first_argv("-laced"))
-			psp_tv_laced = 1;
-
-		psp_tv_aspect = 0;
-		if (first_argv("-16:9"))
-			psp_tv_aspect = 1;
-
-		psp_tv_detail = 0;
-		if (first_argv("-lowdetail"))
-			psp_tv_detail = 1;
-
-		psp_tv_cx = 0;
-		i = first_argv("-tvcx");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_tv_cx);
-
-		psp_tv_cy = 0;
-		i = first_argv("-tvcy");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_tv_cy);
-	}
-	else
-	{
-		psp_lcd_res = 0;
-		i = first_argv("-width");
-		if (i)
-		{
-			sscanf(myargv[i+1], "%d", &j);
-			switch (j)
-			{
-				case 480:
-				psp_lcd_res = 0;
-				break;
-				case 368:
-				psp_lcd_res = 1;
-				break;
-				case 320:
-				psp_lcd_res = 2;
-				break;
-			}
-		}
-
-		psp_lcd_sync = 0;
-		if (first_argv("-vsync"))
-			psp_lcd_sync = 1;
-
-		psp_lcd_aspect = 0;
-		if (first_argv("-16:9"))
-			psp_lcd_aspect = 1;
-
-		psp_lcd_detail = 0;
-		if (first_argv("-lowdetail"))
-			psp_lcd_detail = 1;
-	}
-
-	psp_sfx_enabled = 1;
-	if (first_argv("-nosfx"))
-		psp_sfx_enabled = 0;
-
-	psp_music_enabled = 0;
-	if (first_argv("-music"))
-		psp_music_enabled = 1;
-
-	psp_snd_upd = 2;
-	if (first_argv("-140Hz"))
-		psp_snd_upd = 0;
-	if (first_argv("-70Hz"))
-		psp_snd_upd = 1;
-
-	i = first_argv("-iwad");
-	if (i)
-		psp_iwad_file = strdup(myargv[i+1]);
-	psp_fix_path(&psp_iwad_file, "iwad");
-
-	i = first_argv("-file");
-	if (i)
-	{
-		psp_pwad_file1 = strdup(myargv[i+1]);
-		if ((i+2 < myargc) && myargv[i+2][0] != '-')
-		{
-			psp_pwad_file2 = strdup(myargv[i+2]);
-			if ((i+3 < myargc) && myargv[i+3][0] != '-')
-			{
-				psp_pwad_file3 = strdup(myargv[i+3]);
-				if ((i+4 < myargc) && myargv[i+4][0] != '-')
-					psp_pwad_file4 = strdup(myargv[i+4]);
-			}
-		}
-	}
-
-	i = first_argv("-deh");
-	if (i)
-	{
-		psp_deh_file1 = strdup(myargv[i+1]);
-		if ((i+2 < myargc) && myargv[i+2][0] != '-')
-		{
-			psp_deh_file2 = strdup(myargv[i+2]);
-			if ((i+3 < myargc) && myargv[i+3][0] != '-')
-			{
-				psp_deh_file3 = strdup(myargv[i+3]);
-				if ((i+4 < myargc) && myargv[i+4][0] != '-')
-					psp_deh_file4 = strdup(myargv[i+4]);
-			}
-		}
-	}
-
-	psp_fix_path(&psp_pwad_file1, "pwad");
-	psp_fix_path(&psp_pwad_file2, "pwad");
-	psp_fix_path(&psp_pwad_file3, "pwad");
-	psp_fix_path(&psp_pwad_file4, "pwad");
-	psp_fix_path(&psp_deh_file1, "deh");
-	psp_fix_path(&psp_deh_file2, "deh");
-	psp_fix_path(&psp_deh_file3, "deh");
-	psp_fix_path(&psp_deh_file4, "deh");
-
-	psp_game_nomonsters = 0;
-	if (first_argv("-nomonsters"))
-		psp_game_nomonsters = 1;
-
-	psp_game_respawn = 0;
-	if (first_argv("-respawn"))
-		psp_game_respawn = 1;
-
-	psp_game_fast = 0;
-	if (first_argv("-fast"))
-		psp_game_fast = 1;
-
-	psp_game_turbo = 0;
-	if (first_argv("-turbo"))
-		psp_game_turbo = 1;
-
-	psp_game_maponhu = 0;
-	if (first_argv("-maponhu"))
-		psp_game_maponhu = 1;
-
-	psp_game_rotatemap = 0;
-	if (first_argv("-rotatemap"))
-		psp_game_rotatemap = 1;
-
-	psp_game_deathmatch = 0;
-	if (first_argv("-deathmatch"))
-		psp_game_deathmatch = 1;
-	if (first_argv("-altdeath"))
-		psp_game_deathmatch = 2;
-
-	psp_game_record = 0;
-	i = first_argv("-record");
-	if (i)
-		psp_game_record = (int)(myargv[i+1][4]) - 0x30;
-
-	psp_game_playdemo = 0;
-	i = first_argv("-playdemo");
-	if (i)
-		psp_game_playdemo = (int)(myargv[i+1][4]) - 0x30;
-
-	psp_game_forcedemo = 0;
-	if (first_argv("-forcedemo"))
-		psp_game_forcedemo = 1;
-
-	psp_game_timedemo = 0;
-	i = first_argv("-timedemo");
-	if (i)
-		psp_game_timedemo = (int)(myargv[i+1][4]) - 0x30;
-
-	psp_game_timer = 0;
-	i = first_argv("-timer");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_game_timer);
-
-	psp_cpu_speed = 0;
-	i = first_argv("-cpuMHz");
-	if (i)
-	{
-		sscanf(myargv[i+1], "%d", &psp_cpu_speed);
-		switch (psp_cpu_speed)
-		{
-			case 133:
-			psp_cpu_speed = 1;
-			break;
-			case 222:
-			psp_cpu_speed = 2;
-			break;
-			case 266:
-			psp_cpu_speed = 3;
-			break;
-			case 300:
-			psp_cpu_speed = 4;
-			break;
-			case 333:
-			psp_cpu_speed = 5;
-			break;
-			default:
-			psp_cpu_speed = 0;
-		}
-	}
-
-	psp_stick_cx = 128;
-	i = first_argv("-analogcx");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_stick_cx);
-	psp_stick_cy = 128;
-	i = first_argv("-analogcy");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_stick_cy);
-	psp_stick_minx = 0;
-	i = first_argv("-analogminx");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_stick_minx);
-	psp_stick_miny = 0;
-	i = first_argv("-analogminy");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_stick_miny);
-	psp_stick_maxx = 255;
-	i = first_argv("-analogmaxx");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_stick_maxx);
-	psp_stick_maxy = 255;
-	i = first_argv("-analogmaxy");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_stick_maxy);
-
-	for (j=0; j<NUM_CHEAT_SLOTS; j++)
-	{
-		char arg[24];
-
-		sprintf(arg, "-cheat%d", j+1);
-		psp_ctrl_cheat[j] = 0;
-		i = first_argv(arg);
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_ctrl_cheat[j]);
-	}
-
-	psp_ctrl_swapmove = first_argv("-swapmove") ? 1 : 0;
-	psp_ctrl_swapturn = first_argv("-swapturn") ? 1 : 0;
-	psp_ctrl_run = first_argv("-run") ? 1 : 0;
-
-	// a network game is only started from Join or Host > Start,
-	// "-net" in an old config is ignored
-	psp_net_enabled = 0;
-
-	psp_net_extratic = first_argv("-extratic") ? 1 : 0;
-
-	psp_game_skill = 2;
-	i = first_argv("-skill");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_game_skill);
-
-	psp_game_level = 1;
-	i = first_argv("-warp");
-	if (i && isIWADDoom2())
-		sscanf(myargv[i+1], "%d", &psp_game_level);
-	else if (i)
-	{
-		int t1, t2;
-		sscanf(myargv[i+1], "%d", &t1);
-		sscanf(myargv[i+2], "%d", &t2);
-		psp_game_level = (t1-1)*9 + t2;
-	}
-
 }
