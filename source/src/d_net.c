@@ -93,8 +93,6 @@ void D_DoAdvanceDemo (void);
 boolean		reboundpacket;
 doomdata_t	reboundstore;
 
-static int use_pcchecksum = 0;
-
 
 //
 //
@@ -113,12 +111,6 @@ unsigned NetbufferChecksum (void)
     int		i;
 
     c = 0x1234567;
-
-    // FIXME -endianess?
-#ifdef NORMALUNIX
-    if (!use_pcchecksum)
-      return 0;			// byte order problems
-#endif
 
 #ifdef __BIG_ENDIAN__
     ticcmd_t *t;
@@ -605,8 +597,6 @@ extern	int			viewangleoffset;
 void D_CheckNetGame (void)
 {
     int             i;
-
-    use_pcchecksum = M_CheckParm ("-pcchecksum");
 
     for (i=0 ; i<MAXNETNODES ; i++)
     {

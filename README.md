@@ -60,25 +60,25 @@ source/                 source code and build assets (not needed on the PSP)
 
 ## Launcher
 
-The root menu shows **Start**, the **Main WAD** in use, the **Config** file in use (select it to load another one), **Configure**, **Save** and **About**.
+The root menu shows **Start**, **Join** and **Host** (net game; Host opens the game mode, timer, skill, map and monster settings), the **Main WAD** in use, the **Config** file in use (select it to load another one), **Configure**, **Save** and **About**.
 
-- START runs Doom from any menu. SELECT saves the config from any menu.
+- START runs Doom from any menu (as host from the Host menu). SELECT saves the config from any menu.
 - D-Pad ↑/↓ moves, ←/→ changes the value. CROSS enters, CIRCLE goes back. They are swapped on firmware where CIRCLE confirms.
 - `config/default.cfg` loads at startup. **Save** asks for a name through the on-screen keyboard.
 - **Quit Game** in Doom returns to the launcher. HOME exits to the XMB.
 
 | Configure | Options |
 | --- | --- |
-| CPU | clock: default, 133 to 333 MHz |
+| File | main WAD, up to 4 patch WADs, up to 4 DEH files |
+| Controller | calibrate stick, Movement, L/R, Default movement |
+| Game | no monsters, respawn, fast, turbo, map overlay, rotate map, demos |
+| Cheats | the 12 SELECT cheat slots |
+| Sound | update rate 140/70/35 Hz, sound effects, music |
 | Video > LCD | 480x272 / 368x272 / 320x240, vsync, detail, 4:3 or 16:9 |
 | Video > TV | (Slim, AV cable) 720x480 / 704x448 / 640x400, vsync, detail, interlace, aspect, center screen |
 | Video > Display | LCD or TV |
-| Sound | update rate 140/70/35 Hz, sound effects, music |
-| Controller | calibrate stick, Movement, L/R, Default movement |
-| Cheats | the 12 SELECT cheat slots |
-| File | main WAD, up to 4 patch WADs, up to 4 DEH files |
-| Game | no monsters, respawn, fast, turbo, map overlay, rotate map, demos |
-| Network | net game, player number, deathmatch, skill, map, timer, access point, player addresses |
+| Network | ad-hoc channel, extra tic |
+| CPU | clock: default, 133 to 333 MHz |
 
 ## WADs
 
@@ -100,13 +100,15 @@ Main WADs are identified by file name:
 
 ## Networking
 
-Only TCP/IP Infrastructure (Wi-Fi access point) is supported.
+Network play is ad-hoc: the PSPs talk to each other directly, no access point needed. Up to four players.
 
-1. All players use the same WADs and game settings.
-2. Each player sets **Play Network Game** on and picks a different **Player Number**.
-3. Each player enters the IPs of the *other* players in **Network Player #1..3**. The local IP is shown in the same menu.
+1. Turn the WLAN switch on. All players load the same IWAD, PWADs and DEH files in the same order.
+2. One player opens **Host**, sets the game mode, skill, map and timer, then selects **Start** there. The others select **Join**. The root **Start** always starts a single player game.
+3. The host sees the players come in and presses X when all are listed.
 
-It can also play against PC ports such as SDL Doom v1.10 with **Use PC Checksum**. HOME aborts a stuck connection.
+The host is player 1 and everything set in its **Host** menu applies to everyone; the joiners' own values are ignored. A player whose loaded files differ from the host's is refused. O cancels the wait and goes back to the launcher; HOME aborts a stuck connection.
+
+**Ad-Hoc Channel** (in **Configure > Network**) changes the PSP's own ad-hoc channel (the one in the XMB Network Settings), so it stays set after you quit. Use the same value on all PSPs.
 
 ## Building
 

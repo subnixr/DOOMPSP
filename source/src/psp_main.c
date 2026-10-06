@@ -45,10 +45,10 @@
 
 #include <pspsdk.h>
 #include <psputility_netmodules.h>
-#include <psputility_netparam.h>
 #include <pspwlan.h>
 #include <pspnet.h>
-#include <pspnet_apctl.h>
+#include <pspnet_adhoc.h>
+#include <pspnet_adhocctl.h>
 
 #include "intraFont.h"
 
@@ -77,10 +77,6 @@ char psp_home[256];
 #define PSP_PATH_MAX 512
 char psp_exe_path[256];
 int psp_relaunch_ok = 0;
-
-int psp_net_available = 0;
-char *psp_net_ipaddr = 0;
-char szMyIPAddr[32];
 
 int psp_use_intrafont = 0;
 intraFont *ltn8 = 0;
@@ -416,8 +412,6 @@ void psp_font_init(void)
  */
 
 extern char *RequestFile (char *initialPath);
-void psp_net_connect(void *arg);
-void psp_net_disconnect(void *arg);
 
 void gui_PrePrint(void)
 {
@@ -615,36 +609,26 @@ int psp_game_fast = 0;
 int psp_game_turbo = 0;
 int psp_game_maponhu = 0;
 int psp_game_rotatemap = 0;
-int psp_game_deathmatch = 0;
-int psp_game_altdeath = 0;
+int psp_game_deathmatch = 0; // 0 = co-op, 1 = deathmatch, 2 = alt deathmatch
 int psp_game_record = 0;
 int psp_game_playdemo = 0;
 int psp_game_forcedemo = 0;
 int psp_game_timedemo = 0;
 int psp_game_timer = 0;
-int psp_game_avg = 0;
-int psp_game_statcopy = 0;
-int psp_game_version = 110;
-int psp_game_pcchksum = 1;
 int psp_game_skill = 2; // Hurt Me Plenty (medium)
 int psp_game_level = 1;
 
 int psp_net_enabled = 0;
-int psp_net_type = 0;
-int psp_net_accesspoint = 1;
-int psp_net_port = 5029; // 5000 + 0x1d
-int psp_net_ticdup = 1;
+int psp_net_role = 0; // 0 = host, 1 = join
+int psp_net_channel = 0; // index into adhoc_channels, mirrors the PSP system setting
 int psp_net_extratic = 0;
-int psp_net_player1 = 1;
-char *psp_net_player2 = 0;
-char *psp_net_player3 = 0;
-char *psp_net_player4 = 0;
+int psp_net_player1 = 1; // our player number, 1 = host; set by the lobby
 int psp_net_error = 0;
 
-int net_access_range[2] = { 1, 1 };
-char net_ap_str[1024] = "Net Access Points : ";
-
-int connected_accesspoint = 0;
+// filled by the lobby for psp_net.c: [0] is us, then the other players
+#define ADHOC_MAXPLAYERS 4
+int psp_adhoc_numnodes = 0;
+unsigned char psp_adhoc_mac[ADHOC_MAXPLAYERS][6];
 
 
 int gui_menu_len(struct gui_menu *menu)
@@ -675,6 +659,14 @@ void psp_save_config(void *arg);
 
 void psp_gui_start(void *arg)
 {
+	gui_start_requested = 1;
+}
+
+// Join / Host > Start: start a network game in that role (arg = psp_net_role)
+void psp_gui_start_net(void *arg)
+{
+	psp_net_role = (int)arg;
+	psp_net_enabled = 1;
 	gui_start_requested = 1;
 }
 
@@ -1012,9 +1004,12 @@ void do_gui(struct gui_menu *menu, void *menufn, int toplevel)
 		sceCtrlReadBufferPositive(&pad, 1);
 		if ((pad.Buttons & PSP_CTRL_START) && !(prev_buttons & PSP_CTRL_START))
 		{
-			// START launches the game from any menu level
+			// START launches the game from any menu level,
+			// as host from the Host menu
 			while (pad.Buttons & PSP_CTRL_START)
 				sceCtrlReadBufferPositive(&pad, 1);
+			if (menu[0].field1 == (void *)&psp_gui_start_net)
+				psp_gui_start_net(menu[0].field2);
 			gui_start_requested = 1;
 		}
 		if ((pad.Buttons & PSP_CTRL_SELECT) && !(prev_buttons & PSP_CTRL_SELECT))
@@ -1153,6 +1148,17 @@ void psp_save_config(void *arg)
 	char filename[64];
 	unsigned short intext[128]  = { 'd', 'e', 'f', 'a', 'u', 'l', 't', '.', 'c', 'f', 'g', 0 }; // text already in the edit box on start
 	unsigned short desc[128]	= { 'E', 'n', 't', 'e', 'r', ' ', 'F', 'i', 'l', 'e', ' ', 'N', 'a', 'm', 'e', 0 }; // description
+	char *slash = strrchr(psp_cfg_status, '/');
+
+	// start with the name of the current config, if it lives in config/
+	// (legacy default.set/doom.set and "(none)" keep default.cfg)
+	if (slash && slash[1] && slash - psp_cfg_status >= 6 && !strncmp(slash - 6, "config", 6)
+		&& (slash - psp_cfg_status == 6 || slash[-7] == '/'))
+	{
+		for (i = 0; i < 50 && slash[1 + i]; i++)
+			intext[i] = (unsigned char)slash[1 + i];
+		intext[i] = 0;
+	}
 
 	ok = get_text_osk(filename, intext, desc);
 
@@ -1419,11 +1425,6 @@ void psp_stick_calibrate(void *arg)
 	psp_stick_maxy = My;
 }
 
-void InfraFunc(struct gui_menu *menu)
-{
-
-}
-
 void psp_gui(void)
 {
 	struct gui_menu AboutLevel[] = {
@@ -1444,28 +1445,13 @@ void psp_gui(void)
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
 
-	struct gui_list net_type_list[] = {
-		{ "TCP/IP Infrastructure", 0 },
-		{ "TCP/IP Ad-Hoc", 1 },
+	// same order as adhoc_channels
+	struct gui_list net_channel_list[] = {
+		{ "Automatic", 0 },
+		{ "1", 1 },
+		{ "6", 2 },
+		{ "11", 3 },
 		{ 0, GUI_END_OF_LIST }
-	};
-
-	int net_ticdup_range[2] = { 1, 9 };
-	int net_player1_range[2] = { 1, 4 };
-	int net_port_range[2] = { 5000, 65535 };
-
-	struct gui_menu InfraLevel[] = {
-		{ "Network Access Point", GUI_CENTER | GUI_INTEGER, &psp_net_accesspoint, &net_access_range, GUI_ENABLED },
-		{ "Connect to Access Point", GUI_CENTER | GUI_FUNCTION, &psp_net_connect, 0, GUI_ENABLED },
-		{ "Disconnect from Access Point", GUI_CENTER | GUI_FUNCTION, &psp_net_disconnect, 0, GUI_ENABLED },
-		{ "Network Port", GUI_CENTER | GUI_INTEGER, &psp_net_port, &net_port_range, GUI_ENABLED },
-		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
-		{ "Network Player #1 Addr", GUI_LEFT | GUI_STRING, &psp_net_player2, 0, GUI_ENABLED },
-		{ "Network Player #2 Addr", GUI_LEFT | GUI_STRING, &psp_net_player3, 0, GUI_ENABLED },
-		{ "Network Player #3 Addr", GUI_LEFT | GUI_STRING, &psp_net_player4, 0, GUI_ENABLED },
-		{ "Local Network Address ", GUI_LEFT | GUI_STRING, &psp_net_ipaddr, 0, GUI_DISABLED },
-		{ net_ap_str, GUI_LEFT | GUI_TEXT, 0, 0, GUI_DISABLED },
-		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
 
 	int game_level_range[2] = { 1, 36 };
@@ -1479,22 +1465,33 @@ void psp_gui(void)
 		{ 0, GUI_END_OF_LIST }
 	};
 
-	struct gui_menu NetLevel[] = {
-		{ "Play Network Game", GUI_CENTER | GUI_TOGGLE, &psp_net_enabled, 0, GUI_ENABLED },
-		{ "Player Number",  GUI_CENTER | GUI_INTEGER, &psp_net_player1, &net_player1_range, GUI_ENABLED },
-		{ "Deathmatch", GUI_CENTER | GUI_TOGGLE, &psp_game_deathmatch, 0, GUI_ENABLED },
-		{ "Alt Deathmatch", GUI_CENTER | GUI_TOGGLE, &psp_game_altdeath, 0, GUI_ENABLED },
+	struct gui_list game_mode_list[] = {
+		{ "Co-op", 0 },
+		{ "Deathmatch", 1 },
+		{ "Alt Deathmatch", 2 },
+		{ 0, GUI_END_OF_LIST }
+	};
+
+	// the host's settings apply to every player
+	struct gui_menu HostLevel[] = {
+		{ "Start", GUI_CENTER | GUI_FUNCTION, &psp_gui_start_net, (void *)0, GUI_ENABLED },
+		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
+		{ "Game Mode", GUI_CENTER | GUI_SELECT, &game_mode_list, &psp_game_deathmatch, GUI_ENABLED },
+		{ "Timed Game", GUI_CENTER | GUI_INTEGER, &psp_game_timer, 0, GUI_ENABLED },
+		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
 		{ "Starting Skill Level", GUI_CENTER | GUI_SELECT, &game_skill_list, &psp_game_skill, GUI_ENABLED },
 		{ "Starting Map Level", GUI_CENTER | GUI_INTEGER, &psp_game_level, &game_level_range, GUI_ENABLED },
-		{ "Timed Game", GUI_CENTER | GUI_INTEGER, &psp_game_timer, 0, GUI_ENABLED },
-		{ "A.V.G.", GUI_CENTER | GUI_TOGGLE, &psp_game_avg, 0, GUI_ENABLED },
-		{ "Copy Stats", GUI_CENTER | GUI_TOGGLE, &psp_game_statcopy, 0, GUI_ENABLED },
-		{ "Force Version", GUI_CENTER | GUI_INTEGER, &psp_game_version, 0, GUI_ENABLED },
-		{ "Use PC Checksum", GUI_CENTER | GUI_TOGGLE, &psp_game_pcchksum, 0, GUI_ENABLED },
-		{ "Network Type", GUI_CENTER | GUI_SELECT, &net_type_list, &psp_net_type, GUI_DISABLED },
-		{ "Network Type Settings", GUI_CENTER | GUI_MENU, &InfraLevel, &InfraFunc, GUI_ENABLED },
+		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
+		// same settings as in Configure > Game
+		{ "No Monsters", GUI_CENTER | GUI_TOGGLE, &psp_game_nomonsters, 0, GUI_ENABLED },
+		{ "Respawn", GUI_CENTER | GUI_TOGGLE, &psp_game_respawn, 0, GUI_ENABLED },
+		{ "Fast", GUI_CENTER | GUI_TOGGLE, &psp_game_fast, 0, GUI_ENABLED },
+		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
+	};
+
+	struct gui_menu NetLevel[] = {
+		{ "Ad-Hoc Channel", GUI_CENTER | GUI_SELECT, &net_channel_list, &psp_net_channel, GUI_ENABLED },
 		{ "Network Extra Tic", GUI_CENTER | GUI_TOGGLE, &psp_net_extratic, 0, GUI_ENABLED },
-		{ "Network Tic Dup", GUI_CENTER | GUI_INTEGER, &psp_net_ticdup, &net_ticdup_range, GUI_ENABLED },
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
 
@@ -1682,25 +1679,28 @@ void psp_gui(void)
 	};
 
 	struct gui_menu EditLevel[] = {
-		{ "CPU", GUI_CENTER | GUI_MENU, CpuLevel, 0, GUI_ENABLED },
-		{ "Video", GUI_CENTER | GUI_MENU, VideoLevel, 0, GUI_ENABLED },
-		{ "Sound", GUI_CENTER | GUI_MENU, SoundLevel, 0, GUI_ENABLED },
-		{ "Controller", GUI_CENTER | GUI_MENU, ControlLevel, 0, GUI_ENABLED },
-		{ "Cheats", GUI_CENTER | GUI_MENU, CheatLevel, 0, GUI_ENABLED },
 		{ "File", GUI_CENTER | GUI_MENU, FileLevel, 0, GUI_ENABLED },
+		{ "Controller", GUI_CENTER | GUI_MENU, ControlLevel, 0, GUI_ENABLED },
 		{ "Game", GUI_CENTER | GUI_MENU, GameLevel, 0, GUI_ENABLED },
+		{ "Cheats", GUI_CENTER | GUI_MENU, CheatLevel, 0, GUI_ENABLED },
+		{ "Sound", GUI_CENTER | GUI_MENU, SoundLevel, 0, GUI_ENABLED },
+		{ "Video", GUI_CENTER | GUI_MENU, VideoLevel, 0, GUI_ENABLED },
 		{ "Network", GUI_CENTER | GUI_MENU, NetLevel, 0, GUI_ENABLED },
+		{ "CPU", GUI_CENTER | GUI_MENU, CpuLevel, 0, GUI_ENABLED },
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
 
 	struct gui_menu TopLevel[] = {
 		{ "Start", GUI_CENTER | GUI_FUNCTION, &psp_gui_start, 0, GUI_ENABLED },
+		{ "Join", GUI_CENTER | GUI_FUNCTION, &psp_gui_start_net, (void *)1, GUI_ENABLED },
+		{ "Host", GUI_CENTER | GUI_MENU, HostLevel, 0, GUI_ENABLED },
 		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
 		{ "Main WAD:", GUI_CENTER | GUI_TEXT, 0, 0, GUI_DISABLED },
 		{ "", GUI_CENTER | GUI_FILE, &psp_iwad_file, "iwad", GUI_ENABLED },
 		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
 		{ "Config:", GUI_CENTER | GUI_TEXT, 0, 0, GUI_DISABLED },
 		{ psp_cfg_status, GUI_CENTER | GUI_FUNCTION, &psp_load_config, 0, GUI_ENABLED },
+		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
 		{ "Configure", GUI_CENTER | GUI_MENU, EditLevel, 0, GUI_ENABLED },
 		{ "Save", GUI_CENTER | GUI_FUNCTION, &psp_save_config, 0, GUI_ENABLED },
 		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
@@ -1723,6 +1723,7 @@ void psp_gui(void)
 	if (temp)
 		fclose(temp);
 
+	gui_start_requested = 0;
 	do_gui(TopLevel, (void *)0, 1);
 
 	// now set the arg list
@@ -1730,90 +1731,158 @@ void psp_gui(void)
 }
 
 // Network support code
+//
+// Ad-hoc only. Every PSP joins the same ad-hoc group as an equal; who hosts
+// and who plays is settled by a small lobby on its own PDP port before the
+// game opens its socket (psp_net.c).
 
-int connect_to_apctl(int config) {
-  int err, i;
-  int stateLast = -1;
+#define ADHOC_GROUP     "DOOM"
+#define ADHOC_LOBBYPORT 5030 // the game itself uses 5029
 
-  if (sceWlanGetSwitchState() != 1)
-    printf("Please enable WLAN or press a button to procede without networking.\n");
-  for (i=0; i<10; i++)
-    {
-      SceCtrlData pad;
-      if (sceWlanGetSwitchState() == 1) break;
-      sceCtrlReadBufferPositive(&pad, 1);
-      if (pad.Buttons) return 0;
-	  printf("%d... ", 10-i);
-      sceKernelDelayThread(1000 * 1000);
-    }
-  printf("\n");
-  if (i == 10) return 0;
+#define LOBBY_MAGIC 0x4D4F4F44 // "DOOM"
+#define LOBBY_HOST  0
+#define LOBBY_JOIN  1
+#define LOBBY_TICK  (50*1000) // lobby loops poll at 20 Hz
+#define LOBBY_SEND  4         // ticks between announcements
+#define LOBBY_LOST  60        // ticks of silence before a peer is dropped
 
-  err = sceNetApctlConnect(config);
-  if (err != 0) {
-    printf("sceNetApctlConnect returns %08X\n", err);
-    return 0;
-  }
+typedef struct {
+	u32 magic;
+	u8 type;     // LOBBY_HOST or LOBBY_JOIN
+	u8 started;  // host: the player list is final, go
+	u8 count;    // host: players in mac[]
+	u8 mode;     // host: the Host menu settings from here on, see lobby_host_packet
+	u32 checksum; // sender's loaded content
+	u8 mac[ADHOC_MAXPLAYERS][6]; // host: players in order, host first
+	u8 skill;
+	u8 level;
+	u8 nomonsters;
+	u8 respawn;
+	u8 fast;
+	u8 pad[3];
+	s32 timer;
+} lobby_packet_t;
 
-  printf("Connecting...\n");
-  while (1) {
-    int state;
-    err = sceNetApctlGetState(&state);
-    if (err != 0) {
-      printf("sceNetApctlGetState returns $%x\n", err);
-      break;
-    }
-    if (state != stateLast) {
-      printf("  Connection state %d of 4.\n", state);
-      stateLast = state;
-    }
-    if (state == 4) {
-      break;
-    }
-    sceKernelDelayThread(50 * 1000);
-  }
-  connected_accesspoint = config;
-  printf("Connected!\n");
-  sceKernelDelayThread(3000 * 1000);
+// values of PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL, in menu order
+static const int adhoc_channels[] = { 0, 1, 6, 11 };
 
-  if (err != 0) {
-    return 0;
-  }
+static int lobby_pdp = -1;
 
-  return 1;
-}
-
-char *getconfname(int confnum) {
-  static char confname[128];
-
-  if (sceUtilityCheckNetParam(confnum) != 0)
-  	return 0;
-
-  sceUtilityGetNetParam(confnum, PSP_NETPARAM_NAME, (netData *)confname);
-  return confname;
-}
-
-int net_thread(SceSize args, void *argp)
+void psp_adhoc_read_channel(void)
 {
-  int selComponent = psp_net_accesspoint; // access point selector
+	int val, i;
 
-  printf("Using connection %d (%s) to connect...\n", selComponent, getconfname(selComponent));
+	if (sceUtilityGetSystemParamInt(PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL, &val) != PSP_SYSTEMPARAM_RETVAL_OK)
+		return;
+	for (i = 0; i < 4; i++)
+		if (adhoc_channels[i] == val)
+			psp_net_channel = i;
+}
 
-  if (connect_to_apctl(selComponent))
-  {
-    if (sceNetApctlGetInfo(8, szMyIPAddr) != 0)
-      strcpy(szMyIPAddr, "unknown IP address");
-    printf("IP: %s\n", szMyIPAddr);
-    psp_net_available = 1;
-  }
-  else
-    psp_net_available = -1;
+// the channel is a PSP system setting: this changes it for the XMB too
+static void psp_adhoc_write_channel(void)
+{
+	int val;
 
-  return 0;
+	if (sceUtilityGetSystemParamInt(PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL, &val) == PSP_SYSTEMPARAM_RETVAL_OK
+	  && val == adhoc_channels[psp_net_channel])
+		return;
+	if (sceUtilitySetSystemParamInt(PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL, adhoc_channels[psp_net_channel]) != PSP_SYSTEMPARAM_RETVAL_OK)
+	{
+		psp_adhoc_read_channel();
+		if (adhoc_channels[psp_net_channel])
+			printf("Could not change the ad-hoc channel, using %d.\n", adhoc_channels[psp_net_channel]);
+		else
+			printf("Could not change the ad-hoc channel, using automatic.\n");
+	}
+}
+
+static u32 psp_checksum_add(u32 sum, const void *data, int len)
+{
+	const unsigned char *p = data;
+
+	// FNV-1a
+	while (len--)
+		sum = (sum ^ *p++) * 16777619u;
+	return sum;
+}
+
+// name, size and (WADs) the lump directory or (DEH) the whole file
+static u32 psp_checksum_file(u32 sum, char *path, int wad)
+{
+	unsigned char buf[1024];
+	char *name;
+	FILE *f;
+	int size, left, n;
+
+	if (!path)
+		return sum;
+
+	name = strrchr(path, '/');
+	name = name ? name + 1 : path;
+	for (; *name; name++)
+	{
+		buf[0] = (*name >= 'A' && *name <= 'Z') ? *name + 32 : *name;
+		sum = psp_checksum_add(sum, buf, 1);
+	}
+	buf[0] = 0;
+	sum = psp_checksum_add(sum, buf, 1);
+
+	f = fopen(path, "rb");
+	if (!f)
+		return sum;
+	fseek(f, 0, SEEK_END);
+	size = ftell(f);
+	sum = psp_checksum_add(sum, &size, sizeof(size));
+
+	left = size;
+	fseek(f, 0, SEEK_SET);
+	if (wad)
+	{
+		struct { char id[4]; int numlumps; int infotableofs; } header;
+
+		left = 0;
+		if (fread(&header, 1, sizeof(header), f) == sizeof(header)
+		  && header.numlumps > 0 && header.infotableofs > 0
+		  && header.infotableofs < size
+		  && header.numlumps <= (size - header.infotableofs) / 16)
+		{
+			left = header.numlumps * 16;
+			fseek(f, header.infotableofs, SEEK_SET);
+		}
+	}
+	while (left > 0)
+	{
+		n = fread(buf, 1, left < sizeof(buf) ? left : sizeof(buf), f);
+		if (n <= 0)
+			break;
+		sum = psp_checksum_add(sum, buf, n);
+		left -= n;
+	}
+	fclose(f);
+	return sum;
+}
+
+// players must load the same files in the same order or the game desyncs
+static u32 psp_content_checksum(void)
+{
+	u32 sum = 2166136261u;
+
+	sum = psp_checksum_file(sum, psp_iwad_file, 1);
+	sum = psp_checksum_file(sum, psp_pwad_file1, 1);
+	sum = psp_checksum_file(sum, psp_pwad_file2, 1);
+	sum = psp_checksum_file(sum, psp_pwad_file3, 1);
+	sum = psp_checksum_file(sum, psp_pwad_file4, 1);
+	sum = psp_checksum_file(sum, psp_deh_file1, 0);
+	sum = psp_checksum_file(sum, psp_deh_file2, 0);
+	sum = psp_checksum_file(sum, psp_deh_file3, 0);
+	sum = psp_checksum_file(sum, psp_deh_file4, 0);
+	return sum;
 }
 
 int InitialiseNetwork(void)
 {
+  struct productStruct product;
   int err;
 
   printf("load network modules...");
@@ -1823,15 +1892,24 @@ int InitialiseNetwork(void)
     printf("Error, could not load PSP_NET_MODULE_COMMON %08X\n", err);
     return 1;
   }
-  err = sceUtilityLoadNetModule(PSP_NET_MODULE_INET);
+  err = sceUtilityLoadNetModule(PSP_NET_MODULE_ADHOC);
   if (err != 0)
   {
-    printf("Error, could not load PSP_NET_MODULE_INET %08X\n", err);
+    printf("Error, could not load PSP_NET_MODULE_ADHOC %08X\n", err);
     return 1;
   }
   printf("done\n");
 
-  err = pspSdkInetInit();
+  err = sceNetInit(0x20000, 0x20, 0x1000, 0x20, 0x1000);
+  if (err == 0)
+    err = sceNetAdhocInit();
+  if (err == 0)
+  {
+    // any product id works, as long as all players use the same one
+    memset(&product, 0, sizeof(product));
+    memcpy(product.product, "DOOM00001", 9);
+    err = sceNetAdhocctlInit(0x2000, 0x30, &product);
+  }
   if (err != 0)
   {
     printf("Error, could not initialise the network %08X\n", err);
@@ -1859,173 +1937,394 @@ static int psp_net_start(void)
 	return 0;
 }
 
-void psp_net_init (void)
+static int psp_adhoc_wait_wlan(void)
 {
 	int i;
 
-	for (i=1; i<100; i++)
+	if (sceWlanGetSwitchState() != 1)
+		printf("Please enable WLAN or press a button to go back to the launcher.\n");
+	for (i=0; i<10; i++)
 	{
-		char *cfg;
-
-		cfg = getconfname(i);
-		if (cfg)
-		{
-			printf("Found connection %d (%s)\n", i, cfg);
-			strcat(net_ap_str, cfg);
-			strcat(net_ap_str, " ");
-		}
-		else
-			break;
+		SceCtrlData pad;
+		if (sceWlanGetSwitchState() == 1) break;
+		sceCtrlReadBufferPositive(&pad, 1);
+		if (pad.Buttons) return 0;
+		printf("%d... ", 10-i);
+		sceKernelDelayThread(1000 * 1000);
 	}
-	if (i>1)
-		net_access_range[1] = i-1;
-
-	sceKernelDelayThread(2*1000*1000);
+	printf("\n");
+	return i < 10;
 }
 
-void psp_net_connect (void * arg)
+static int psp_adhoc_connect(void)
 {
-	SceUID thid;
+	int err, i, state;
+
+	err = sceNetAdhocctlConnect(ADHOC_GROUP);
+	if (err != 0)
+	{
+		printf("sceNetAdhocctlConnect returns %08X\n", err);
+		return 0;
+	}
+
+	printf("Joining the ad-hoc group...\n");
+	for (i=0; i<300; i++) // 15 seconds
+	{
+		err = sceNetAdhocctlGetState(&state);
+		if (err != 0)
+		{
+			printf("sceNetAdhocctlGetState returns %08X\n", err);
+			return 0;
+		}
+		if (state == 1) // connected
+			return 1;
+		sceKernelDelayThread(50 * 1000);
+	}
+	printf("Could not join the ad-hoc group.\n");
+	return 0;
+}
+
+static void lobby_send(unsigned char *mac, lobby_packet_t *pkt)
+{
+	sceNetAdhocPdpSend(lobby_pdp, mac, ADHOC_LOBBYPORT, pkt, sizeof(*pkt), 0, 1);
+}
+
+// -1 = nothing waiting, 0 = not a lobby packet, 1 = got one
+static int lobby_recv(unsigned char *mac, lobby_packet_t *pkt)
+{
+	unsigned short port;
+	int len = sizeof(*pkt);
+
+	if (sceNetAdhocPdpRecv(lobby_pdp, mac, &port, pkt, &len, 0, 1) < 0)
+		return -1;
+	return len == sizeof(*pkt) && pkt->magic == LOBBY_MAGIC;
+}
+
+#define LOBBY_NAME 32
+
+// the PSP's nickname (System Settings), its MAC address if we can't get it
+static void lobby_peer_name(unsigned char *mac, char *name)
+{
+	char nick[128];
 	int i;
 
-	pspDebugScreenInit();
-	pspDebugScreenSetBackColor(0xFF000000);
-	pspDebugScreenSetTextColor(0xFFFFFFFF);
-	pspDebugScreenClear();
+	nick[0] = 0;
+	if (sceNetAdhocctlGetNameByAddr(mac, nick) < 0 || !nick[0])
+	{
+		sceNetEtherNtostr(mac, name);
+		return;
+	}
+	// the debug screen font is ASCII only
+	for (i = 0; i < LOBBY_NAME - 1 && nick[i]; i++)
+		name[i] = (nick[i] >= 32 && nick[i] < 127) ? nick[i] : '?';
+	name[i] = 0;
+}
 
-	// check if connected
-	if (connected_accesspoint)
-		if (connected_accesspoint == psp_net_accesspoint)
+// the host's announcement: who is in, and the Host menu settings
+static void lobby_host_packet(lobby_packet_t *pkt, int n, u32 checksum, int started)
+{
+	memset(pkt, 0, sizeof(*pkt));
+	pkt->magic = LOBBY_MAGIC;
+	pkt->type = LOBBY_HOST;
+	pkt->started = started;
+	pkt->count = n;
+	pkt->checksum = checksum;
+	memcpy(pkt->mac, psp_adhoc_mac, sizeof(pkt->mac));
+	pkt->mode = psp_game_deathmatch;
+	pkt->skill = psp_game_skill;
+	pkt->level = psp_game_level;
+	pkt->nomonsters = psp_game_nomonsters;
+	pkt->respawn = psp_game_respawn;
+	pkt->fast = psp_game_fast;
+	pkt->timer = psp_game_timer;
+}
+
+// joiner: play with the host's settings instead of our own
+static void lobby_adopt_settings(lobby_packet_t *pkt)
+{
+	psp_game_deathmatch = pkt->mode;
+	psp_game_skill = pkt->skill;
+	psp_game_level = pkt->level;
+	psp_game_nomonsters = pkt->nomonsters;
+	psp_game_respawn = pkt->respawn;
+	psp_game_fast = pkt->fast;
+	psp_game_timer = pkt->timer;
+	set_myargv();
+}
+
+// returns the bits of 'mask' that went down since the last call
+static u32 lobby_buttons(u32 mask)
+{
+	static u32 prev = 0xFFFFFFFF; // whatever is held on entry does not count
+	SceCtrlData pad;
+	u32 pressed;
+
+	sceCtrlReadBufferPositive(&pad, 1);
+	pressed = pad.Buttons & ~prev & mask;
+	prev = pad.Buttons;
+	return pressed;
+}
+
+// returns the number of players, 0 if cancelled
+static int psp_adhoc_host(u32 checksum)
+{
+	struct SceNetAdhocctlPeerInfo peers[16];
+	unsigned char bad[ADHOC_MAXPLAYERS][6];
+	int lastseen[ADHOC_MAXPLAYERS];
+	char names[ADHOC_MAXPLAYERS][LOBBY_NAME]; // as shown when they joined
+	lobby_packet_t pkt, in;
+	unsigned char from[6];
+	char str[LOBBY_NAME];
+	int n = 1, nbad = 0, tick, i, r, len;
+	u32 buttons;
+
+	printf("Hosting. %s starts the game once the players are in, %s cancels.\n\n",
+		psp_btn_swap ? "X" : "O", psp_btn_swap ? "O" : "X");
+
+	for (tick = 0; ; tick++)
+	{
+		// joiners keep announcing themselves with their content checksum
+		while ((r = lobby_recv(from, &in)) >= 0)
 		{
-			printf("Already connected to access point.\n");
-			sceKernelDelayThread(4*1000*1000);
-			return;
+			if (!r || in.type != LOBBY_JOIN)
+				continue;
+			if (in.checksum != checksum)
+			{
+				for (i = 0; i < nbad; i++)
+					if (!memcmp(bad[i], from, 6))
+						break;
+				if (i == nbad && nbad < ADHOC_MAXPLAYERS)
+				{
+					memcpy(bad[nbad++], from, 6);
+					lobby_peer_name(from, str);
+					printf("%s refused: content mismatch\n", str);
+				}
+				continue;
+			}
+			for (i = 1; i < n; i++)
+				if (!memcmp(psp_adhoc_mac[i], from, 6))
+					break;
+			if (i == ADHOC_MAXPLAYERS)
+				continue; // full
+			lastseen[i] = tick;
+			if (i == n)
+			{
+				lobby_peer_name(from, names[n]);
+				memcpy(psp_adhoc_mac[n++], from, 6);
+				printf("%s joined, %d players\n", names[n-1], n);
+			}
 		}
 
+		// joiners that went quiet cancelled or are out of range
+		for (i = 1; i < n; i++)
+			if (tick - lastseen[i] > LOBBY_LOST)
+			{
+				strcpy(str, names[i]);
+				n--;
+				memmove(psp_adhoc_mac[i], psp_adhoc_mac[i+1], (n - i) * 6);
+				memmove(names[i], names[i+1], (n - i) * LOBBY_NAME);
+				memmove(&lastseen[i], &lastseen[i+1], (n - i) * sizeof(int));
+				printf("%s left, %d players\n", str, n);
+				i--;
+			}
+
+		// tell the whole group who is in, that is also how joiners find us
+		if (!(tick % LOBBY_SEND))
+		{
+			lobby_host_packet(&pkt, n, checksum, 0);
+			len = sizeof(peers);
+			if (sceNetAdhocctlGetPeerList(&len, peers) == 0)
+				for (i = 0; i < len / sizeof(peers[0]); i++)
+					lobby_send(peers[i].mac, &pkt);
+		}
+
+		buttons = lobby_buttons(psp_btn_ok | psp_btn_back);
+		if ((buttons & psp_btn_back) || quit_requested)
+			return 0;
+		if ((buttons & psp_btn_ok) && n > 1)
+			break;
+		sceKernelDelayThread(LOBBY_TICK);
+	}
+
+	// the list is final: repeat it so no joiner misses the start
+	lobby_host_packet(&pkt, n, checksum, 1);
+	for (r = 0; r < 10; r++)
+	{
+		for (i = 1; i < n; i++)
+			lobby_send(psp_adhoc_mac[i], &pkt);
+		sceKernelDelayThread(100*1000);
+	}
+
+	psp_net_player1 = 1;
+	return n;
+}
+
+// returns the number of players, 0 if cancelled
+static int psp_adhoc_joiner(u32 checksum)
+{
+	lobby_packet_t pkt, in;
+	unsigned char host[6], from[6];
+	char str[LOBBY_NAME];
+	int havehost = 0, hostseen = 0, warned = 0, shown = 0;
+	int tick, i, j, n, r;
+
+	printf("Looking for a host, %s cancels.\n\n", psp_btn_swap ? "O" : "X");
+
+	for (tick = 0; ; tick++)
+	{
+		while ((r = lobby_recv(from, &in)) >= 0)
+		{
+			if (!r || in.type != LOBBY_HOST)
+				continue;
+			if (havehost && memcmp(from, host, 6))
+				continue; // a second host in range, stay with ours
+			if (!havehost)
+			{
+				memcpy(host, from, 6);
+				havehost = 1;
+				warned = shown = 0;
+				lobby_peer_name(host, str);
+				printf("Found host %s\n", str);
+			}
+			hostseen = tick;
+
+			if (in.checksum != checksum)
+			{
+				if (!warned)
+				{
+					printf("Loaded content differs from the host's. All players need the same\n");
+					printf("IWAD, PWADs and DEH files in the same order. Fix it and launch again.\n");
+				}
+				warned = 1;
+				continue;
+			}
+
+			if (in.count > ADHOC_MAXPLAYERS)
+				continue;
+			for (i = 0; i < in.count; i++)
+				if (!memcmp(in.mac[i], psp_adhoc_mac[0], 6))
+					break;
+			if (i < in.count && shown != in.count)
+			{
+				shown = in.count;
+				printf("Joined as player %d of %d, waiting for the host to start.\n", i+1, in.count);
+			}
+			if (!in.started)
+				continue;
+			if (i == in.count)
+			{
+				printf("The host started without us.\n");
+				return 0;
+			}
+
+			lobby_adopt_settings(&in);
+			psp_net_player1 = i+1;
+			n = 1;
+			for (j = 0; j < in.count; j++)
+				if (j != i)
+					memcpy(psp_adhoc_mac[n++], in.mac[j], 6);
+			return n;
+		}
+
+		if (havehost && tick - hostseen > LOBBY_LOST)
+		{
+			printf("Host lost, looking again.\n");
+			havehost = 0;
+		}
+
+		// keep announcing ourselves, a mismatch too so the host can show it
+		if (havehost && !(tick % LOBBY_SEND))
+		{
+			memset(&pkt, 0, sizeof(pkt));
+			pkt.magic = LOBBY_MAGIC;
+			pkt.type = LOBBY_JOIN;
+			pkt.checksum = checksum;
+			lobby_send(host, &pkt);
+		}
+
+		if (lobby_buttons(psp_btn_back) || quit_requested)
+			return 0;
+		sceKernelDelayThread(LOBBY_TICK);
+	}
+}
+
+// join the ad-hoc group and run the lobby; fills psp_adhoc_mac,
+// psp_adhoc_numnodes and psp_net_player1 for psp_net.c
+static int psp_adhoc_join(void)
+{
+	int n;
+
+	psp_adhoc_numnodes = 0;
+
+	psp_adhoc_write_channel();
 	if (psp_net_start() != 0)
 	{
-		printf("Networking not available. Will be disabled for game.\n");
-		sceKernelDelayThread(4*1000*1000);
-		pspDebugScreenClear();
-		return;
+		printf("Networking not available.\n");
+		return 0;
 	}
+	if (!psp_adhoc_wait_wlan())
+		return 0;
+	if (!psp_adhoc_connect())
+		return 0;
 
-	thid = sceKernelCreateThread("net_thread", net_thread, 0x18, 0x10000, PSP_THREAD_ATTR_USER, NULL);
-	if (thid < 0) {
-		printf("Could not create network thread. Networking disabled for game.\n");
-		sceKernelDelayThread(4*1000*1000);
-		return;
-	}
-	sceKernelStartThread(thid, 0, NULL);
-	for (i=0; i<30; i++)
+	sceWlanGetEtherAddr(psp_adhoc_mac[0]);
+	lobby_pdp = sceNetAdhocPdpCreate(psp_adhoc_mac[0], ADHOC_LOBBYPORT, 0x2000, 0);
+	if (lobby_pdp < 0)
 	{
-		if (psp_net_available) break;
-		sceKernelDelayThread(1000*1000);
-	}
-	if (psp_net_available != 1)
-	{
-		printf("Networking failed to connect. Will be disabled for game.\n");
-		sceKernelDelayThread(4*1000*1000);
-		pspDebugScreenClear();
-		return;
+		printf("sceNetAdhocPdpCreate returns %08X\n", lobby_pdp);
+		sceNetAdhocctlDisconnect();
+		return 0;
 	}
 
-	psp_net_ipaddr = strdup(szMyIPAddr);
-
-	printf("Networking successfully started. Networking enabled for game.\n");
-	sceKernelDelayThread(4*1000*1000);
-
-	pspDebugScreenClear();
-}
-
-void psp_net_disconnect(void *arg)
-{
-	pspDebugScreenInit();
-	pspDebugScreenSetBackColor(0xFF000000);
-	pspDebugScreenSetTextColor(0xFFFFFFFF);
-	pspDebugScreenClear();
-
-	// check if connected
-	if (connected_accesspoint)
-	{
-		// disconnect access point
-		sceNetApctlDisconnect();
-		psp_net_available = 0;
-		connected_accesspoint = 0;
-		printf("Access point disconnected.\n");
-		sceKernelDelayThread(2*1000*1000);
-	}
+	if (psp_net_role)
+		n = psp_adhoc_joiner(psp_content_checksum());
 	else
+		n = psp_adhoc_host(psp_content_checksum());
+
+	sceNetAdhocPdpDelete(lobby_pdp, 0);
+	lobby_pdp = -1;
+	if (!n)
 	{
-		printf("Already disconnected.\n");
-		sceKernelDelayThread(4*1000*1000);
+		sceNetAdhocctlDisconnect();
+		return 0;
 	}
 
-	pspDebugScreenClear();
+	psp_adhoc_numnodes = n;
+	return 1;
 }
 
-void psp_net_reconnect(void)
+// returns 0 when the network game asked for could not be started
+int psp_net_reconnect(void)
 {
 	int i, p;
 
-	p = M_CheckParm ("-cpuMHz");
-
-	// check if need to disconnect
-	if (psp_net_started && ((psp_net_enabled && (psp_net_accesspoint != connected_accesspoint))
-	  || p
-	  || (!psp_net_enabled && connected_accesspoint)))
-	{
-		// disconnect access point
-		sceNetApctlDisconnect();
-		psp_net_available = 0;
-		connected_accesspoint = 0;
-		sceKernelDelayThread(2*1000*1000);
-	}
-
 	// check if need to change CPU speed
+	p = M_CheckParm ("-cpuMHz");
 	if (p && p < myargc - 1)
 	{
 		i = atoi (myargv[p+1]);
 		scePowerSetClockFrequency(i, i, i>>1);
 	}
 
-	// check if need to reconnect
-	if (psp_net_enabled && (psp_net_accesspoint != connected_accesspoint))
+	if (psp_net_enabled)
 	{
-		SceUID thid;
-		int i;
-
-		// reconnect to selected access point
-		thid = -1;
-		if (psp_net_start() != 0)
-			printf("Networking not available. Networking disabled for game.\n");
-		else if ((thid = sceKernelCreateThread("net_thread", net_thread, 0x18, 0x10000, PSP_THREAD_ATTR_USER, NULL)) < 0)
-			printf("Could not create network thread. Networking disabled for game.\n");
+		if (psp_adhoc_join())
+			printf("\nStarting a %d player game as player %d.\n", psp_adhoc_numnodes, psp_net_player1);
 		else
 		{
-			sceKernelStartThread(thid, 0, NULL);
-			for (i=0; i<30; i++)
-			{
-				if (psp_net_available) break;
-				sceKernelDelayThread(1000*1000);
-			}
-		}
-		if (thid < 0)
+			printf("\nNo network game, back to the launcher.\n");
 			psp_net_enabled = 0;
-		else if (psp_net_available != 1)
-		{
-			printf("Couldn't connect to access point. Networking disabled for game.\n");
-			psp_net_enabled = 0;
+			sceKernelDelayThread(3*1000*1000);
+			return 0;
 		}
-		else
-			printf("Connected to selected access point.\n");
 		sceKernelDelayThread(3*1000*1000);
 	}
+	return 1;
 }
 
 int main (int argc, char **argv)
 {
-    int i, p;
+    int i;
 
 	pspDebugScreenInit();
 	pspDebugScreenSetBackColor(0xFF000000);
@@ -2078,7 +2377,7 @@ int main (int argc, char **argv)
 		psp_relaunch_ok = pspSdkLoadStartModule(str, PSP_MEMORY_PARTITION_KERNEL) >= 0;
 	}
 
-	psp_net_init();
+	psp_adhoc_read_channel();
 	psp_font_init();
 
 	if ((myargv = malloc(sizeof(char *) * MAXARGVS)) == NULL)
@@ -2106,33 +2405,32 @@ int main (int argc, char **argv)
 			psp_iwad_file = psp_find_file(temp, iwads[i]);
 	}
 
-	psp_gui();
-
-	pspDebugScreenInit();
-	pspDebugScreenSetBackColor(0xFF000000);
-	pspDebugScreenSetTextColor(0xFFFFFFFF);
-	pspDebugScreenClear();
-
-	printf ("DOOM v%d.%d for the PSP\n\n", VERS, REVS);
-	printf ("Args passed to D_DoomMain() are:\n");
-	for (i = 1 ; i < myargc; i++)
-		printf (" %s", myargv[i]);
-	printf ("\n\n");
-
 /* The original fixed point code is faster on GCC */
 #ifdef USE_FLOAT_FIXED
 	SetFPMode ();  /* set FPU rounding mode to "trunc towards -infinity" */
 #endif
 
-	psp_net_reconnect(); // disconnect and reconnect if changed connection or CPU speed
+	// a Host/Join that is cancelled or fails comes back to the launcher
+	do
+	{
+		psp_gui();
+
+		pspDebugScreenInit();
+		pspDebugScreenSetBackColor(0xFF000000);
+		pspDebugScreenSetTextColor(0xFFFFFFFF);
+		pspDebugScreenClear();
+
+		printf ("DOOM v%d.%d for the PSP\n\n", VERS, REVS);
+		printf ("Args passed to D_DoomMain() are:\n");
+		for (i = 1 ; i < myargc; i++)
+			printf (" %s", myargv[i]);
+		printf ("\n\n");
+	}
+	while (!psp_net_reconnect()); // set CPU speed, then join the ad-hoc game if enabled
 
 	i = scePowerGetCpuClockFrequency();
 	printf("The current CPU speed is %d MHz\n\n", i);
 	sceKernelDelayThread(1*1000*1000);
-
-	p = M_CheckParm ("-forceversion");
-	if (p && p < myargc - 1)
-		VERSION = atoi (myargv[p+1]);
 
 	D_DoomMain ();
 
@@ -2449,13 +2747,7 @@ void set_myargv(void)
 
 	if (psp_game_deathmatch)
 	{
-		myargv[myargc] = strdup("-deathmatch");
-		myargc++;
-	}
-
-	if (psp_game_altdeath)
-	{
-		myargv[myargc] = strdup("-altdeath");
+		myargv[myargc] = strdup(psp_game_deathmatch == 2 ? "-altdeath" : "-deathmatch");
 		myargc++;
 	}
 
@@ -2497,27 +2789,6 @@ void set_myargv(void)
 		myargv[myargc] = strdup("-timer");
 		myargc++;
 		sprintf(temp, "%2d", psp_game_timer);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-	}
-
-	if (psp_game_avg)
-	{
-		myargv[myargc] = strdup("-avg");
-		myargc++;
-	}
-
-	if (psp_game_statcopy)
-	{
-		myargv[myargc] = strdup("-statcopy");
-		myargc++;
-	}
-
-	if (psp_game_version != 110)
-	{
-		myargv[myargc] = strdup("-forceversion");
-		myargc++;
-		sprintf(temp, "%3d", psp_game_version);
 		myargv[myargc] = strdup(temp);
 		myargc++;
 	}
@@ -2611,94 +2882,11 @@ void set_myargv(void)
 		myargc++;
 	}
 
-	if (psp_net_enabled && !psp_net_error)
+	// network tuning; only used in a network game
+	if (psp_net_extratic)
 	{
-		myargv[myargc] = strdup("-typenet");
+		myargv[myargc] = strdup("-extratic");
 		myargc++;
-		sprintf(temp, "%d", psp_net_type);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-
-		myargv[myargc] = strdup("-accesspoint");
-		myargc++;
-		sprintf(temp, "%d", psp_net_accesspoint);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-
-		if (psp_net_port != 5029)
-		{
-			myargv[myargc] = strdup("-port");
-			myargc++;
-			sprintf(temp, "%d", psp_net_port);
-			myargv[myargc] = strdup(temp);
-			myargc++;
-		}
-
-		if (psp_net_ticdup > 1)
-		{
-			myargv[myargc] = strdup("-dup");
-			myargc++;
-			sprintf(temp, "%d", psp_net_ticdup);
-			myargv[myargc] = strdup(temp);
-			myargc++;
-		}
-
-		if (psp_net_extratic)
-		{
-			myargv[myargc] = strdup("-extratic");
-			myargc++;
-		}
-
-		if (psp_game_pcchksum)
-		{
-			myargv[myargc] = strdup("-pcchecksum");
-			myargc++;
-		}
-
-		myargv[myargc] = strdup("-net");
-		myargc++;
-		sprintf(temp, "%d", psp_net_player1);
-		myargv[myargc] = strdup(temp);
-		myargc++;
-
-		if (psp_net_player2)
-		{
-			if (psp_net_player2[0] >= '1' && psp_net_player2[0] <= '9')
-			{
-				strcpy(temp, ".");
-				strcat(temp, psp_net_player2);
-			}
-			else
-				strcpy(temp, psp_net_player2);
-			myargv[myargc] = strdup(temp);
-			myargc++;
-		}
-
-		if (psp_net_player3)
-		{
-			if (psp_net_player3[0] >= '1' && psp_net_player3[0] <= '9')
-			{
-				strcpy(temp, ".");
-				strcat(temp, psp_net_player3);
-			}
-			else
-				strcpy(temp, psp_net_player3);
-			myargv[myargc] = strdup(temp);
-			myargc++;
-		}
-
-		if (psp_net_player4)
-		{
-			if (psp_net_player4[0] >= '1' && psp_net_player4[0] <= '9')
-			{
-				strcpy(temp, ".");
-				strcat(temp, psp_net_player4);
-			}
-			else
-				strcpy(temp, psp_net_player4);
-			myargv[myargc] = strdup(temp);
-			myargc++;
-		}
 	}
 
 	if (psp_game_skill != 2)
@@ -2969,10 +3157,8 @@ void get_myargv(void)
 	psp_game_deathmatch = 0;
 	if (first_argv("-deathmatch"))
 		psp_game_deathmatch = 1;
-
-	psp_game_altdeath = 0;
 	if (first_argv("-altdeath"))
-		psp_game_altdeath = 1;
+		psp_game_deathmatch = 2;
 
 	psp_game_record = 0;
 	i = first_argv("-record");
@@ -2997,19 +3183,6 @@ void get_myargv(void)
 	i = first_argv("-timer");
 	if (i)
 		sscanf(myargv[i+1], "%d", &psp_game_timer);
-
-	psp_game_avg = 0;
-	if (first_argv("-avg"))
-		psp_game_avg = 1;
-
-	psp_game_statcopy = 0;
-	if (first_argv("-statcopy"))
-		psp_game_statcopy = 1;
-
-	psp_game_version = 110;
-	i = first_argv("-forceversion");
-	if (i)
-		sscanf(myargv[i+1], "%d", &psp_game_version);
 
 	psp_cpu_speed = 0;
 	i = first_argv("-cpuMHz");
@@ -3078,64 +3251,11 @@ void get_myargv(void)
 	psp_ctrl_swapturn = first_argv("-swapturn") ? 1 : 0;
 	psp_ctrl_run = first_argv("-run") ? 1 : 0;
 
+	// a network game is only started from Join or Host > Start,
+	// "-net" in an old config is ignored
 	psp_net_enabled = 0;
-	i = first_argv("-net");
-	if (i && !psp_net_error)
-	{
-		psp_net_enabled = 1;
-		sscanf(myargv[i+1], "%d", &psp_net_player1);
-		if ((i+2 < myargc) && myargv[i+2][0] != '-')
-		{
-			if (myargv[i+2][0] == '.')
-				psp_net_player2 = strdup(&myargv[i+2][1]);
-			else
-				psp_net_player2 = strdup(myargv[i+2]);
-			if ((i+3 < myargc) && myargv[i+3][0] != '-')
-			{
-				if (myargv[i+3][0] == '.')
-					psp_net_player3 = strdup(&myargv[i+3][1]);
-				else
-					psp_net_player3 = strdup(myargv[i+3]);
-				if ((i+4 < myargc) && myargv[i+4][0] != '-')
-				{
-					if (myargv[i+4][0] == '.')
-						psp_net_player4 = strdup(&myargv[i+4][1]);
-					else
-						psp_net_player4 = strdup(myargv[i+4]);
-				}
-			}
-		}
 
-		psp_net_type = 0;
-		i = first_argv("-typenet");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_net_type);
-
-		psp_net_accesspoint = 1;
-		i = first_argv("-accesspoint");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_net_accesspoint);
-		if (psp_net_accesspoint > net_access_range[1])
-			psp_net_accesspoint = 1;
-
-		psp_net_port = 5029; // 5000 + 0x1d
-		i = first_argv("-port");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_net_port);
-
-		psp_net_ticdup = 0;
-		i = first_argv("-dup");
-		if (i)
-			sscanf(myargv[i+1], "%d", &psp_net_ticdup);
-
-		psp_net_extratic = 0;
-		if (first_argv("-extratic"))
-			psp_net_extratic = 1;
-
-		psp_game_pcchksum = 0;
-		if (first_argv("-pcchecksum"))
-			psp_game_pcchksum = 1;
-	}
+	psp_net_extratic = first_argv("-extratic") ? 1 : 0;
 
 	psp_game_skill = 2;
 	i = first_argv("-skill");

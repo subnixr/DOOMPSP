@@ -85,7 +85,7 @@ BUILD_PRX = 1
 PSP_FW_VERSION = 371
 
 LIBDIR = ../lib
-LIBS = -lpsprtc -lpspwlan -lpspgum -lpspgu -lpsputility -lpspaudiolib -lpspaudio -lpsppower -lm -lpspkubridge
+LIBS = -lpsprtc -lpspwlan -lpspnet_adhocctl -lpspnet_adhoc -lpspgum -lpspgu -lpsputility -lpspaudiolib -lpspaudio -lpsppower -lm -lpspkubridge
 LDFLAGS =
 
 EXTRA_TARGETS = EBOOT.PBP

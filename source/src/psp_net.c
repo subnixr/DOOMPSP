@@ -2,22 +2,14 @@
 #include <pspdebug.h>
 #include <psputility.h>
 #include <pspnet.h>
-#include <pspnet_apctl.h>
+#include <pspnet_adhoc.h>
+#include <pspnet_adhocctl.h>
 
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <time.h>
 
-
-#include <arpa/inet.h>
 #include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/fcntl.h>
-#include <sys/ioctl.h>
-#include <errno.h>
-#include <unistd.h>
-#include <netdb.h>
 
 #include <pspsdk.h>
 
@@ -35,12 +27,13 @@
 #define printf pspDebugScreenPrintf
 
 
-#ifndef IPPORT_USERRESERVED
-#define IPPORT_USERRESERVED	5000
-#endif
-
-
 void cleanup_net (void);
+
+// set by the launcher lobby (psp_main.c) before D_DoomMain
+extern int psp_net_enabled;
+extern int psp_net_player1;              // our player number, 1 = host
+extern int psp_adhoc_numnodes;           // players in the game, us included
+extern unsigned char psp_adhoc_mac[][6]; // [0] is us, then the other players
 
 
 //
@@ -49,14 +42,13 @@ void cleanup_net (void);
 
 /**********************************************************************/
 /**********************************************************************/
-/* TCP/IP stuff */
+/* Ad-Hoc stuff */
 
-static int IP_DOOMPORT = (IPPORT_USERRESERVED + 0x1d);
+// the launcher lobby uses ADHOC_DOOMPORT + 1
+#define ADHOC_DOOMPORT	5029 // 5000 + 0x1d
 
-static int IP_sendsocket = -1;
-static int IP_insocket = -1;
-
-static struct sockaddr_in IP_sendaddress[MAXNETNODES];
+static int ADHOC_pdp = -1;
+static int ADHOC_connected = 0;
 
 static void (*netget) (void);
 static void (*netsend) (void);
@@ -64,50 +56,9 @@ static void (*netsend) (void);
 
 /**********************************************************************/
 //
-// IP_UDPsocket
+// ADHOC_PacketSend
 //
-static int IP_UDPsocket (void)
-{
-  int s;
-  int val = 1;
-
-  // allocate a socket
-  s = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP );
-  if (s < 0)
-    I_Error ("can't create socket: %s", strerror(errno));
-
-  // set to non-blocking
-  if(setsockopt(s, SOL_SOCKET, SO_NONBLOCK, &val, sizeof(val)) < 0)
-    I_Error ("can't set socket option: %s", strerror(errno));
-
-  return s;
-}
-
-/**********************************************************************/
-//
-// IP_BindToLocalPort
-//
-static void IP_BindToLocalPort (int s, int port)
-{
-  int v;
-  struct sockaddr_in address;
-
-  memset (&address, 0, sizeof(address));
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_ANY); // let's be anal!
-  address.sin_port = htons(port);
-
-  v = bind (s, (struct sockaddr *)&address, sizeof(address));
-  if (v == -1)
-    I_Error ("BindToPort: bind: %s", strerror(errno));
-}
-
-
-/**********************************************************************/
-//
-// IP_PacketSend
-//
-static void IP_PacketSend (void)
+static void ADHOC_PacketSend (void)
 {
   int  c;
   doomdata_t sw;
@@ -129,60 +80,46 @@ static void IP_PacketSend (void)
 
   //printf ("sending %i\n",gametic);
   sceKernelDelayThread(10);
-  c = sendto (IP_sendsocket , (unsigned char *)&sw, doomcom->datalength,
-              0, (struct sockaddr *)&IP_sendaddress[doomcom->remotenode],
-              sizeof(IP_sendaddress[doomcom->remotenode]));
-  //printf("Sending packet to %s\n", inet_ntoa(IP_sendaddress[doomcom->remotenode].sin_addr));
-//  if (c == -1) {
-//    if (errno != EWOULDBLOCK)
-//      I_Error ("SendPacket error: %s",strerror(errno));
-//  }
+  // a full send buffer just drops the packet, the game resends
+  sceNetAdhocPdpSend (ADHOC_pdp, psp_adhoc_mac[doomcom->remotenode],
+                      ADHOC_DOOMPORT, &sw, doomcom->datalength, 0, 1);
 }
 
 
 /**********************************************************************/
 //
-// IP_PacketGet
+// ADHOC_PacketGet
 //
-static void IP_PacketGet (void)
+static void ADHOC_PacketGet (void)
 {
   int i, c;
-  struct sockaddr_in fromaddress;
-  socklen_t fromlen;
+  unsigned char frommac[6];
+  unsigned short fromport;
+  int len;
   doomdata_t sw;
 
-  fromlen = sizeof(fromaddress);
+  len = sizeof(sw);
   sceKernelDelayThread(10);
-  c = recvfrom (IP_insocket, (unsigned char *)&sw, sizeof(sw), 0,
-                (struct sockaddr *)&fromaddress, &fromlen);
-  if (c == -1) {
-    if (errno != EWOULDBLOCK)
-      I_Error ("GetPacket: %s",strerror(errno));
+  c = sceNetAdhocPdpRecv (ADHOC_pdp, frommac, &fromport, &sw, &len, 0, 1);
+  if (c < 0) {
+    // nothing waiting (or a bad packet)
     doomcom->remotenode = -1;  // no packet
     return;
   }
 
-  {
-    static int first=1;
-    if (first)
-      printf("len=%d:p=[0x%x 0x%x] \n", c, *(int*)&sw, *((int*)&sw+1));
-    first = 0;
-  }
-
   // find remote node number
-  for (i = 0; i < doomcom->numnodes; i++)
-    if (fromaddress.sin_addr.s_addr == IP_sendaddress[i].sin_addr.s_addr)
+  for (i = 1; i < doomcom->numnodes; i++)
+    if (!memcmp (frommac, psp_adhoc_mac[i], 6))
       break;
 
   if (i == doomcom->numnodes) {
-    // packet is not from one of the players (new game broadcast)
-    //printf("packet fromaddr unrecognized %08X\n", ntohl(fromaddress.sin_addr.s_addr));
+    // packet is not from one of the players
     doomcom->remotenode = -1;  // no packet
     return;
   }
 
   doomcom->remotenode = i;   // good packet from a game player
-  doomcom->datalength = c;
+  doomcom->datalength = len;
 
   // byte swap
   netbuffer->checksum = ntohl(sw.checksum);
@@ -204,88 +141,40 @@ static void IP_PacketGet (void)
 
 
 /**********************************************************************/
-#if 0
-static int IP_GetLocalAddress (void)
-{
-  char hostname[1024];
-  struct hostent* hostentry; // host information entry
-  int v;
-
-  // get local address
-  v = gethostname (hostname, sizeof(hostname));
-  if (v == -1)
-    I_Error ("IP_GetLocalAddress : gethostname: errno %d",errno);
-
-  hostentry = gethostbyname (hostname);
-  if (!hostentry)
-    I_Error ("IP_GetLocalAddress : gethostbyname: couldn't get local host");
-
-  return *(int *)hostentry->h_addr_list[0];
-}
-#endif
-
-/**********************************************************************/
 //
-// IP_InitNetwork
+// ADHOC_InitNetwork
 //
-static void IP_InitNetwork (int i)
+static void ADHOC_InitNetwork (void)
 {
-  struct hostent* hostentry; // host information entry
+  // enters with the ad-hoc group joined and the players known (launcher lobby)
+  printf("ADHOC_InitNetwork: player %d of %d\n", psp_net_player1, psp_adhoc_numnodes);
 
-  // enters with PSP network initialized by the launcher
-  printf("IP_InitNetwork()\n");
-
-  netsend = IP_PacketSend;
-  netget = IP_PacketGet;
+  netsend = ADHOC_PacketSend;
+  netget = ADHOC_PacketGet;
   netgame = true;
+  ADHOC_connected = 1;
 
-  // parse player number and host list
-  doomcom->consoleplayer = myargv[i+1][0]-'1';
-  doomcom->numnodes = 1; // this node for sure
-
-  printf("IP_InitNetwork: %s", myargv[i+1]);
-
-  i++;
-  while (++i < myargc && myargv[i][0] != '-') {
-  	memset((void *)&IP_sendaddress[doomcom->numnodes], 0, sizeof(IP_sendaddress[doomcom->numnodes]));
-    IP_sendaddress[doomcom->numnodes].sin_family = AF_INET;
-    IP_sendaddress[doomcom->numnodes].sin_port = htons(IP_DOOMPORT);
-    if (myargv[i][0] == '.') {
-      IP_sendaddress[doomcom->numnodes].sin_addr.s_addr = inet_addr (myargv[i]+1);
-      printf(" %s", myargv[i]+1);
-    } else {
-      hostentry = gethostbyname (myargv[i]);
-      printf(" %s", myargv[i]);
-      if (!hostentry)
-        I_Error ("gethostbyname: couldn't find %s", myargv[i]);
-      IP_sendaddress[doomcom->numnodes].sin_addr.s_addr = *(int *)hostentry->h_addr_list[0];
-    }
-    doomcom->numnodes++;
-  }
-
-  printf("\n");
+  doomcom->consoleplayer = psp_net_player1 - 1;
+  doomcom->numnodes = psp_adhoc_numnodes;
 
   doomcom->id = DOOMCOM_ID;
   doomcom->numplayers = doomcom->numnodes;
 
-  // make sockets for reading/writing
-  IP_insocket = IP_UDPsocket ();
-  IP_sendsocket = IP_UDPsocket ();
-
-  IP_BindToLocalPort (IP_insocket, IP_DOOMPORT);
-
+  ADHOC_pdp = sceNetAdhocPdpCreate (psp_adhoc_mac[0], ADHOC_DOOMPORT, 0x4000, 0);
+  if (ADHOC_pdp < 0)
+    I_Error ("can't create ad-hoc socket: %08X", ADHOC_pdp);
 }
 
 /**********************************************************************/
-static void IP_Shutdown (void)
+static void ADHOC_Shutdown (void)
 {
-  if (IP_insocket != -1) {
-    close (IP_insocket);
-    IP_insocket = -1;
+  if (ADHOC_pdp >= 0) {
+    sceNetAdhocPdpDelete (ADHOC_pdp, 0);
+    ADHOC_pdp = -1;
   }
-  if (IP_sendsocket != -1) {
-    close (IP_sendsocket);
-    IP_sendsocket = -1;
+  if (ADHOC_connected) {
+    sceNetAdhocctlDisconnect ();
+    ADHOC_connected = 0;
   }
 }
 
@@ -296,9 +185,6 @@ static void IP_Shutdown (void)
 //
 void I_InitNetwork (void)
 {
-  int i;
-  int p;
-
   printf("I_InitNetwork()\n");
 
   atexit(cleanup_net);
@@ -309,59 +195,21 @@ void I_InitNetwork (void)
   memset (doomcom, 0, sizeof(*doomcom) );
 
   // set up for network
-  i = M_CheckParm ("-dup");
-  if (i && i < myargc - 1) {
-    doomcom->ticdup = myargv[i+1][0]-'0';
-    if (doomcom->ticdup < 1)
-      doomcom->ticdup = 1;
-    if (doomcom->ticdup > 9)
-      doomcom->ticdup = 9;
-  } else
-    doomcom-> ticdup = 1;
+  // fixed: every player needs the same value and nothing negotiates it
+  doomcom->ticdup = 1;
 
   if (M_CheckParm ("-extratic"))
     doomcom-> extratics = 1;
   else
     doomcom-> extratics = 0;
 
-  p = M_CheckParm ("-port");
-  if (p && p < myargc - 1) {
-    IP_DOOMPORT = atoi (myargv[p+1]);
-    printf ("using alternate port %i\n",IP_DOOMPORT);
-  }
-
-  // parse network game options,
-  //  -net <consoleplayer> <host> <host> ...
-  if ((i = M_CheckParm ("-net")) != 0) {
-    p = M_CheckParm ("-typenet");
-    if (p && p < myargc - 1)
-      p = atoi (myargv[p+1]);
-    else
-      p = -1;
-
-    switch (p) {
-      case 0:
-      // TCP/IP Infrastructure
-      IP_InitNetwork (i);
-      break;
-      case 1:
-      // TC/IP Ad-Hoc
-      case 2:
-      // IPX
-      case 3:
-      // raw serial
-      default:
-      // single player game
-      printf("I_InitNetwork: unsupported network type %d\n", p);
-      netgame = false;
-      doomcom->id = DOOMCOM_ID;
-      doomcom->numplayers = doomcom->numnodes = 1;
-      doomcom->deathmatch = false;
-      doomcom->consoleplayer = 0;
-    }
+  // the launcher clears psp_net_enabled when the lobby fails or is cancelled
+  if (psp_net_enabled && psp_adhoc_numnodes > 1) {
+    ADHOC_InitNetwork ();
   } else {
-    // single player game
+    // single player game: the -extratic tuning is for network games only
     netgame = false;
+    doomcom->extratics = 0;
     doomcom->id = DOOMCOM_ID;
     doomcom->numplayers = doomcom->numnodes = 1;
     doomcom->deathmatch = false;
@@ -384,7 +232,7 @@ void I_NetCmd (void)
 /**********************************************************************/
 void cleanup_net (void)
 {
-  IP_Shutdown ();
+  ADHOC_Shutdown ();
 }
 
 /**********************************************************************/
