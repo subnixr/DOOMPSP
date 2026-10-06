@@ -76,7 +76,7 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
 #include "g_game.h"
 
-extern char psp_home[256];
+#include "psp.h"
 
 
 //#define SAVEGAMESIZE  0x2c000
@@ -489,9 +489,7 @@ void G_DoLoadLevel (void)
 
     // DOOM determines the sky texture to be used
     // depending on the current episode, and the game version.
-    if ( (gamemode == commercial)
-         || ( gamemode == pack_tnt )
-         || ( gamemode == pack_plut ) )
+    if (gamemode == commercial)
     {
         skytexture = R_TextureNumForName ("SKY3");
         if (gamemap < 12)
@@ -526,8 +524,8 @@ void G_DoLoadLevel (void)
     joyxmove = joyymove = 0;
     mousex = mousey = 0;
     sendpause = sendsave = paused = false;
-    memset (mousebuttons, 0, sizeof(mousebuttons));
-    memset (joybuttons, 0, sizeof(joybuttons));
+    memset (mousearray, 0, sizeof(mousearray));
+    memset (joyarray, 0, sizeof(joyarray));
 }
 
 
@@ -568,13 +566,6 @@ boolean G_Responder (event_t* ev)
 
     if (gamestate == GS_LEVEL)
     {
-#if 0
-        if (devparm && ev->type == ev_keydown && ev->data1 == ';')
-        {
-            G_DeathMatchSpawnPlayer (0);
-            return true;
-        }
-#endif
         if (HU_Responder (ev))
             return true;        // chat ate the event
         if (ST_Responder (ev))
@@ -795,12 +786,7 @@ void G_Ticker (void)
 //
 void G_InitPlayer (int player)
 {
-    player_t*   p;
-
-    // set up the saved info
-    p = &players[player];
-
-    // clear everything else to defaults
+    // clear everything to defaults
     G_PlayerReborn (player);
 
 }
@@ -1235,14 +1221,13 @@ void G_LoadGame (char* name)
 
 void G_DoLoadGame (void)
 {
-    int         length;
     int         i;
     int         a,b,c;
     char        vcheck[VERSIONSIZE];
 
     gameaction = ga_nothing;
 
-    length = M_ReadFile (savename, &savebuffer);
+    M_ReadFile (savename, &savebuffer);
     save_p = savebuffer + SAVESTRINGSIZE;
 
     // skip the description field
@@ -1310,13 +1295,11 @@ void G_DoSaveGame (void)
     int         length;
     int         i;
 
-    if (M_CheckParm("-cdrom"))
-        sprintf(name,"c:\\doomdata\\"SAVEGAMENAME"%d.dsg",savegameslot);
-    else
-        sprintf (name,"%ssaves/"SAVEGAMENAME"%d.dsg",psp_home,savegameslot);
+    snprintf (name,sizeof(name),"%ssaves/"SAVEGAMENAME"%d.dsg",psp_home,savegameslot);
     description = savedescription;
 
-    save_p = savebuffer = screens[1]+0x4000;
+    // own buffer: the screens are too small for SAVEGAMESIZE at low resolutions
+    save_p = savebuffer = I_malloc (SAVEGAMESIZE);
 
     memcpy (save_p, description, SAVESTRINGSIZE);
     save_p += SAVESTRINGSIZE;
@@ -1345,6 +1328,8 @@ void G_DoSaveGame (void)
     if (length > SAVEGAMESIZE)
         I_Error ("Savegame buffer overrun");
     M_WriteFile (name, savebuffer, length);
+    free (savebuffer);
+    savebuffer = NULL;
     gameaction = ga_nothing;
     savedescription[0] = 0;
 

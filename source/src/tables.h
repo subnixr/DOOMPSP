@@ -38,13 +38,7 @@
 
 
 
-#ifdef LINUX
-#include <math.h>
-#else
-#ifndef __SASC
 #define PI				3.141592657
-#endif
-#endif
 
 
 #include "doomdef.h"

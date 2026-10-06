@@ -41,13 +41,6 @@
 
 
 
-#ifdef __GNUG__
-#pragma interface
-#endif
-
-#ifdef __SASC
-#pragma options align=mac68k
-#endif
 
 
 //
@@ -285,10 +278,6 @@ typedef struct mobj_s
     struct mobj_s  *	tracer;	
     
 }  mobj_t;
-
-#ifdef __SASC
-#pragma options align=power
-#endif
 
 #endif
 //-----------------------------------------------------------------------------

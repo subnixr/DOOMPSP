@@ -29,10 +29,6 @@
 // Needed for action function pointer handling.
 #include "d_think.h"
 
-#ifdef __SASC
-#pragma options align=mac68k
-#endif
-
 typedef enum
 {
     SPR_TROO ,
@@ -1334,10 +1330,6 @@ typedef struct
 }  mobjinfo_t;
 
 extern FAR mobjinfo_t mobjinfo[NUMMOBJTYPES];
-
-#ifdef __SASC
-#pragma options align=power
-#endif
 
 #endif
 //-----------------------------------------------------------------------------

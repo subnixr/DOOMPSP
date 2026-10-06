@@ -26,11 +26,7 @@
 #include "w_wad.h"
 #include "z_zone.h"
 
-/**********************************************************************/
-void video_cleanup (void);
-
-int pspDveMgrCheckVideoOut();
-int pspDveMgrSetVideoOut(int, int, int, int, int, int, int);
+#include "psp.h"
 
 
 int SCREENWIDTH;
@@ -43,7 +39,6 @@ static u32 video_colourtable[NUMPALETTES][256];
 static int video_palette_index = 0;
 static int video_palette_changed = 0;
 
-static int video_doing_fps = 0;
 static int video_is_laced = 0;
 static int video_cable = 0;
 static int video_is_tv = 0;
@@ -58,28 +53,24 @@ static int vramoffset;
 
 static unsigned int total_frames = 0;
 
-#ifdef PROFILE
-unsigned int profile[32][4];
-#endif
-
 /**********************************************************************/
-static void video_do_fps (u32 *base, int yoffset)
+// switch the video output to the TV; cable: 1 = composite, 2 = component
+void psp_tv_mode(int cable, int laced)
 {
+	if (cable == 1)
+		pspDveMgrSetVideoOut(2, 0x1d1, 720, 503, 1, 15, 0); // composite
+	else
+		if (laced)
+			pspDveMgrSetVideoOut(0, 0x1d1, 720, 503, 1, 15, 0); // component interlaced
+		else
+			pspDveMgrSetVideoOut(0, 0x1d2, 720, 480, 1, 15, 0); // component progressive
 }
 
 /**********************************************************************/
 void video_set_vmode(void)
 {
 	if (video_is_tv)
-	{
-		if (video_cable == 1)
-			pspDveMgrSetVideoOut(2, 0x1d1, 720, 503, 1, 15, 0); // composite
-		else
-			if (video_is_laced)
-				pspDveMgrSetVideoOut(0, 0x1d1, 720, 503, 1, 15, 0); // component interlaced
-			else
-				pspDveMgrSetVideoOut(0, 0x1d2, 720, 480, 1, 15, 0); // component progressive
-	}
+		psp_tv_mode(video_cable, video_is_laced);
 	else
 		sceDisplaySetMode(0,480,272);
 }
@@ -92,11 +83,8 @@ void I_InitGraphics (void)
 {
 	int p;
 
-	atexit(video_cleanup);
-
 	video_cable = pspDveMgrCheckVideoOut();
 
-	video_doing_fps = M_CheckParm ("-fps");
 	video_is_laced = M_CheckParm ("-laced");
 	video_is_tv = M_CheckParm ("-tv");
 	video_vsync = M_CheckParm ("-vsync");
@@ -147,12 +135,11 @@ void I_ShutdownGraphics (void)
 void I_RecalcPalettes (void)
 {
   int p, i;
-  byte *palette;
-  static int lu_palette;
+  byte *playpal, *palette;
 
-  lu_palette = W_GetNumForName ("PLAYPAL");
+  playpal = (byte *) W_CacheLumpName ("PLAYPAL", PU_CACHE);
   for (p = 0; p < NUMPALETTES; p++) {
-    palette = (byte *) W_CacheLumpNum (lu_palette, PU_STATIC)+p*768;
+    palette = playpal + p*768;
     for (i=0; i<256; i++) {
         // Better to define c locally here instead of for the whole function:
         u32 r = gammatable[usegamma][palette[i*3]];
@@ -192,7 +179,6 @@ void I_UpdateNoBlit (void)
 /**********************************************************************/
 void I_FinishUpdate (void)
 {
-	int top, left, width, height;
 	int i, j;
 	u32 *base_address;
 	static u32 *palette = video_colourtable[0];
@@ -209,62 +195,12 @@ void I_FinishUpdate (void)
       video_palette_changed = 0;
     }
 
-#if 0
-	/* update only the viewwindow and dirtybox when gamestate == GS_LEVEL */
-	if (gamestate == GS_LEVEL) {
-    	if (dirtybox[BOXLEFT] < viewwindowx)
-    		left = dirtybox[BOXLEFT];
-    	else
-    		left = viewwindowx;
-    	if (dirtybox[BOXRIGHT] + 1 > viewwindowx + scaledviewwidth)
-    		width = dirtybox[BOXRIGHT] + 1 - left;
-    	else
-    		width = viewwindowx + scaledviewwidth - left;
-    	if (dirtybox[BOXBOTTOM] < viewwindowy) /* BOXBOTTOM is really the top! */
-    		top = dirtybox[BOXBOTTOM];
-    	else
-    		top = viewwindowy;
-    	if (dirtybox[BOXTOP] + 1 > viewwindowy + viewheight)
-    		height = dirtybox[BOXTOP] + 1 - top;
-    	else
-    		height = viewwindowy + viewheight - top;
-    	M_ClearBox (dirtybox);
-#ifdef RANGECHECK
-    	if (left < 0 || left + width > SCREENWIDTH || top < 0 || top + height > SCREENHEIGHT)
-    		I_Error ("I_FinishUpdate: Box out of range: %d %d %d %d", left, top, width, height);
-#endif
-	} else {
-    	left = 0;
-    	top = 0;
-    	width = SCREENWIDTH;
-    	height = SCREENHEIGHT;
-	}
-#else
-   	left = 0;
-   	top = 0;
-   	width = SCREENWIDTH;
-   	height = SCREENHEIGHT;
-#endif
-
 	base_address = vramflip ? vram1 : vram2;
 	base_address = (u32 *)((u32)base_address + vramoffset);
 
-    //start_timer ();
-#if 0
-	for (j=top; j<height; j++)
-		for (i=left; i<width; i++)
-		{
-			if (video_is_laced)
-				if (j & 1)
-					base_address[i + (j>>1)*lineWidth] = palette[screens[0][i + j*SCREENWIDTH]];
-				else
-					base_address[i + (j>>1)*lineWidth + 262*lineWidth] = palette[screens[0][i + j*SCREENWIDTH]];
-			else
-				base_address[i + j*lineWidth] = palette[screens[0][i + j*SCREENWIDTH]];
-		}
-#else
-	for (j=top; j<height; j++)
-		for (i=left; i<width; i+=4)
+	// the whole screen every frame, four 8-bit pixels at a time
+	for (j=0; j<SCREENHEIGHT; j++)
+		for (i=0; i<SCREENWIDTH; i+=4)
 		{
 			u32 fp = *(u32 *)&screens[0][i + j*SCREENWIDTH];
 			if (video_is_laced)
@@ -292,11 +228,6 @@ void I_FinishUpdate (void)
 				base_address[i + 3 + j*lineWidth] = palette[fp>>24];
 			}
 		}
-#endif
-    //lock_time += end_timer ();
-
-    if (video_doing_fps)
-      video_do_fps (base_address, 0);
 
 	if (video_vsync)
 		sceDisplayWaitVblankStart();
@@ -329,37 +260,6 @@ void I_BeginRead (void)
 /**********************************************************************/
 void I_EndRead (void)
 {
-}
-
-/**********************************************************************/
-static void calc_time (u32 time, char *msg)
-{
-#ifdef PSP //__VBCC__
-	printf ("Total %s = %ld us  (%ld us/frame)\n", msg, time, time / total_frames);
-#else
-  printf ("Total %s = %ldu us  (%ldu us/frame)\n", msg, time, time / total_frames);
-#endif
-}
-
-/**********************************************************************/
-void video_cleanup (void)
-{
-  I_ShutdownGraphics ();
-
-  if (total_frames > 0) {
-    printf ("Total number of frames = %u\n", total_frames);
-    //calc_time (wpa8_time, "WritePixelArray8 time ");
-    //calc_time (lock_time, "LockBitMap time       ");
-    //calc_time (c2p_time, "Chunky2Planar time    ");
-#ifdef PROFILE
-    {
-      int i;
-
-      for (i=0; i<32; i++)
-        calc_time (profile[n][2], "Profile Time ");
-    }
-#endif
-  }
 }
 
 /**********************************************************************/

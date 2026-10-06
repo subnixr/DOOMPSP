@@ -40,13 +40,6 @@
 // as commands per game tick.
 #include "d_ticcmd.h"
 
-#ifdef __GNUG__
-#pragma interface
-#endif
-
-#ifdef __SASC
-#pragma options align=mac68k
-#endif
 
 //
 // Player states.
@@ -203,10 +196,6 @@ typedef struct
 
     wbplayerstruct_t	 plyr[MAXPLAYERS];
 }  wbstartstruct_t;
-
-#ifdef __SASC
-#pragma options align=power
-#endif
 
 #endif
 //-----------------------------------------------------------------------------

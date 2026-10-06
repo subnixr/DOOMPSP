@@ -75,7 +75,7 @@ OBJS3 = \
 OBJS = $(OBJS1) $(OBJS2) $(OBJS3)
 
 INCDIR = ../include
-CFLAGS = -O2 -G0 -Wall -fno-exceptions -ffast-math -DNORMALUNIX -DUNROLL -Diabs=abs -fsigned-char -DPSP
+CFLAGS = -O2 -G0 -Wall -fno-exceptions -ffast-math -DUNROLL -Diabs=abs -fsigned-char
 #CFLAGS += -DUSE_FLOAT_FIXED
 CFLAGS += $(EXTRA_CFLAGS)
 CXXFLAGS = $(CFLAGS) -fno-rtti

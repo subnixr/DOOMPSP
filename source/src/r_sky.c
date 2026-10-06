@@ -38,9 +38,6 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 #include "doomstat.h"
 
 
-#ifdef __GNUG__
-#pragma implementation "r_sky.h"
-#endif
 #include "r_sky.h"
 
 

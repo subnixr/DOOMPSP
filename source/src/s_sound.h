@@ -24,9 +24,6 @@
 #define __S_SOUND__
 
 
-#ifdef __GNUG__
-#pragma interface
-#endif
 
 
 

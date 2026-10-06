@@ -31,16 +31,6 @@ rcsid[] = "$Id: m_misc.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
 #include <pspdebug.h>
 #include <psppower.h>
 
-#ifndef PSP //__VBCC__
-#ifdef __SASC
-#include <stat.h>
-#else
-#include <sys/stat.h>
-#endif
-#include <sys/types.h>
-#include <fcntl.h>
-#include <unistd.h>
-#endif
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -117,11 +107,6 @@ M_DrawText
 //
 // M_WriteFile
 //
-#ifndef O_BINARY
-#define O_BINARY 0
-#endif
-
-#ifdef PSP //__VBCC__
 boolean
 M_WriteFile
 ( const char *name,
@@ -150,36 +135,10 @@ M_WriteFile
 
 		return true;
 }
-#else
-boolean
-M_WriteFile
-( char const*	name,
-  void*		source,
-  int		length )
-{
-    int		handle;
-    int		count;
-
-    handle = open ( name, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
-
-    if (handle == -1)
-	return false;
-
-    count = write (handle, source, length);
-    close (handle);
-
-    if (count < length)
-	return false;
-
-    return true;
-}
-#endif
 
 //
 // M_ReadFile
 //
-#ifdef PSP //__VBCC__
-
 int
 M_ReadFile
 ( char const* name,
@@ -203,45 +162,6 @@ M_ReadFile
 		*buffer = buf;
 		return length;
 }
-#else
-
-int
-M_ReadFile
-( char const*	name,
-  byte**	buffer )
-{
-    FILE *handle;
-    int	count, length;
-    struct stat	*fileinfo = NULL;
-    byte		*buf;
-
-    if ((handle = fopen (name, "r")) == NULL ||
-        (fileinfo = malloc (sizeof(struct stat))) == NULL ||
-        fstat (fileno(handle), fileinfo) == -1)
-        I_Error ("Couldn't read file %s", name);
-    length = fileinfo->st_size;
-    free (fileinfo);
-    buf = Z_Malloc (length, PU_STATIC, NULL);
-    count = fread (buf, 1, length, handle);
-    fclose (handle);
-/*
-    handle = open (name, O_RDONLY | O_BINARY, 0666);
-    if (handle == -1)
-	I_Error ("Couldn't read file %s", name);
-    if (fstat (handle,&fileinfo) == -1)
-	I_Error ("Couldn't read file %s", name);
-    length = fileinfo.st_size;
-    buf = Z_Malloc (length, PU_STATIC, NULL);
-    count = read (handle, buf, length);
-    close (handle);
-*/
-    if (count < length)
-	I_Error ("Couldn't read file %s", name);
-
-    *buffer = buf;
-    return length;
-}
-#endif
 
 //
 // DEFAULTS
@@ -288,17 +208,6 @@ extern int	showMessages;
 extern	int	numChannels;
 
 
-// UNIX hack, to be removed.
-#ifdef SNDSERV
-extern char*	sndserver_filename;
-extern int	mb_used;
-#endif
-
-#ifdef LINUX
-char*		mousetype;
-char*		mousedev;
-#endif
-
 extern char*	chat_macros[];
 
 
@@ -321,7 +230,6 @@ default_t	defaults[] =
     {"hud_levelstats",&hud_levelstats, 1},
 
 
-#ifdef NORMALUNIX
     {"key_right",&key_right, KEY_RIGHTARROW},
     {"key_left",&key_left, KEY_LEFTARROW},
     {"key_up",&key_up, KEY_UPARROW},
@@ -334,29 +242,12 @@ default_t	defaults[] =
     {"key_strafe",&key_strafe, KEY_RALT},
     {"key_speed",&key_speed, KEY_RSHIFT},
 
-// UNIX hack, to be removed.
-#ifdef SNDSERV
-    {"sndserver", (int *) &sndserver_filename, (int) "sndserver"},
-    {"mb_used", &mb_used, 2},
-#endif
-
-#endif
-
-#ifdef LINUX
-    {"mousedev", (int*)&mousedev, (int)"/dev/ttyS0"},
-    {"mousetype", (int*)&mousetype, (int)"microsoft"},
-#endif
-
     {"use_mouse",&usemouse, 1},
     {"mouseb_fire",&mousebfire,0},
     {"mouseb_strafe",&mousebstrafe,1},
     {"mouseb_forward",&mousebforward,2},
 
-#ifdef AMIGA
-    {"use_joystick",&usejoystick, 1},
-#else
     {"use_joystick",&usejoystick, 0},
-#endif
     {"joyb_fire",&joybfire,0},
     {"joyb_strafe",&joybstrafe,1},
     {"joyb_use",&joybuse,3},
@@ -365,11 +256,7 @@ default_t	defaults[] =
     {"screenblocks",&screenblocks, 10},
     {"detaillevel",&detailLevel, 0},
 
-#ifdef AMIGA
-    {"snd_channels",&numChannels, 2},   /* 2 for effects + 2 for music */
-#else
     {"snd_channels",&numChannels, 3},
-#endif
 
 
     {"usegamma",&usegamma, 0},

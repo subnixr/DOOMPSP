@@ -412,11 +412,7 @@ P_NightmareRespawn (mobj_t* mobj)
 //
 // P_MobjThinker
 //
-#ifdef __SASC
 void P_MobjThinker (mobj_t* mobj)
-#else
-void P_MobjThinker (mobj_t* mobj)
-#endif
 {
     // momentum movement
     if (mobj->momx

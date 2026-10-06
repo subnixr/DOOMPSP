@@ -27,9 +27,6 @@ static const char
 rcsid[] = "$Id: p_enemy.c,v 1.5 1997/02/03 22:45:11 b1 Exp $";
 
 #include <stdlib.h>
-#ifdef __SASC
-#include <dos.h>
-#endif
 
 #include "m_random.h"
 #include "i_system.h"
@@ -506,23 +503,16 @@ P_LookForPlayers
     int		c;
     int		stop;
     player_t*	player;
-    sector_t*	sector;
     angle_t	an;
     fixed_t	dist;
-		
-    sector = actor->subsector->sector;
-	
+
     c = 0;
     stop = (actor->lastlook-1)&3;
 	
     for ( ; ; actor->lastlook = (actor->lastlook+1)&3 )
     {
-	if (!playeringame[actor->lastlook]) {
-#ifdef __SASC
-            chkabort ();
-#endif
+	if (!playeringame[actor->lastlook])
 	    continue;
-        }
 			
 	if (c++ == 2
 	    || actor->lastlook == stop)

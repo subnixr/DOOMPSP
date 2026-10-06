@@ -41,9 +41,6 @@ static const char rcsid[] = "$Id: d_net.c,v 1.3 1997/02/03 22:01:47 b1 Exp $";
 #include "doomdef.h"
 #include "doomstat.h"
 #include "m_argv.h"
-#ifdef __BIG_ENDIAN__
-#include "m_swap.h"
-#endif
 
 #define	NCMD_EXIT		0x80000000
 #define	NCMD_RETRANSMIT		0x40000000
@@ -109,32 +106,15 @@ unsigned NetbufferChecksum (void)
 {
     unsigned		c;
     int		i;
+    int		l;
 
     c = 0x1234567;
-
-#ifdef __BIG_ENDIAN__
-    ticcmd_t *t;
-
-    c += SWAPLONG(*(unsigned *)&netbuffer->retransmitfrom);
-    for (i = 0; i < netbuffer->numtics; i++) {
-      t = &netbuffer->cmds[i];
-      c += ((i << 1) + 2) * (((unsigned char)t->forwardmove) +
-                             (((unsigned char)t->sidemove) << 8) +
-                             (((unsigned short)t->angleturn) << 16));
-      c += ((i << 1) + 3) * (((unsigned short)t->consistancy) +
-                             (((unsigned char)t->chatchar) << 16) +
-                             (((unsigned char)t->buttons) << 24));
-    }
-    return c & NCMD_CHECKSUM;
-#else
-    int l;
 
     l = (NetbufferSize () - (int)&(((doomdata_t *)0)->retransmitfrom))/4;
     for (i=0 ; i<l ; i++)
 	c += ((unsigned *)&netbuffer->retransmitfrom)[i] * (i+1);
 
     return c & NCMD_CHECKSUM;
-#endif
 }
 
 //
@@ -505,9 +485,6 @@ void CheckAbort (void)
 	if (ev->type == ev_keydown && ev->data1 == KEY_ESCAPE)
 	    I_Error ("Network game synchronization aborted.");
     }
-#ifdef __SASC
-    chkabort ();
-#endif
 }
 
 
@@ -568,18 +545,11 @@ void D_ArbitrateNetStart (void)
 			//printf(".");
 	    }
 
-#if 1
 	    for(i = 10 ; i  &&  HGetPacket(); --i)
 	    {
 			if((netbuffer->player&0x7f) < MAXNETNODES)
 			    gotinfo[netbuffer->player&0x7f] = true;
 	    }
-#else
-	    while (HGetPacket ())
-	    {
-			gotinfo[netbuffer->player&0x7f] = true;
-	    }
-#endif
 
 	    for (i=1 ; i<doomcom->numnodes ; i++)
 			if (!gotinfo[i])

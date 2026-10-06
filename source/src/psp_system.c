@@ -23,23 +23,9 @@
 #include "m_argv.h"
 #include "doomstat.h"
 #include "m_menu.h"
+#include "psp.h"
 
 #define printf pspDebugScreenPrintf
-
-int pspDveMgrSetVideoOut(int, int, int, int, int, int, int);
-int pspRelaunchSelf(int apitype, const char *path);
-
-extern int psp_use_tv;
-extern char psp_exe_path[];
-extern int psp_relaunch_ok;
-
-typedef unsigned char      uint8_t;
-typedef signed   char      sint8_t;
-typedef unsigned short     uint16_t;
-typedef signed   short     sint16_t;
-typedef signed   int       sint32_t;
-
-extern byte *vid_mem;
 
 int quit_requested = 0;
 
@@ -56,13 +42,9 @@ static int stick_minx = 0;
 static int stick_miny = 0;
 static int stick_maxx = 255;
 static int stick_maxy = 255;
-#define NUM_CHEAT_SLOTS 12
 static int ctrl_cheat[NUM_CHEAT_SLOTS];
 static int swap_move = 0;   // DPad moves, analog does the DPad actions
 static int swap_turn = 0;   // L/R strafe, move stick X turns
-
-extern int psp_stickturn;
-extern int psp_alwaysrun;
 
 /**********************************************************************/
 // Called by DoomMain.
@@ -149,8 +131,6 @@ byte*	I_ZoneBase (int *size)
 // Called by D_DoomLoop,
 // returns current time in tics.
 
-extern volatile int snd_ticks; // advanced by sound thread
-
 int I_GetTime (void)
 {
   return snd_ticks;
@@ -168,8 +148,6 @@ void I_Yield (void)
 
 volatile int psp_suspending = 0;
 const char *psp_step = "startup";
-
-extern char psp_home[256];
 
 // Debug log for sleep problems: open/append/close per line so it
 // survives the PSP powering off.
@@ -304,19 +282,6 @@ void I_Quit (void)
 }
 
 /**********************************************************************/
-// Allocates from low memory under dos,
-// just mallocs under unix
-byte* I_AllocLow (int length)
-{
-  byte*	mem;
-
-  if ((mem = (byte *)malloc (length)) == NULL)
-    I_Error ("Out of memory allocating %d bytes", length);
-  memset (mem,0,length);
-  return mem;
-}
-
-/**********************************************************************/
 void I_Tactile (int on, int off, int total)
 {
   // UNUSED.
@@ -358,7 +323,7 @@ void I_Error (char *error, ...)
 
 	// Message first.
 	va_start (argptr, error);
-	vsprintf (msg, error, argptr);
+	vsnprintf (msg, sizeof(msg), error, argptr);
 	va_end (argptr);
 	printf("Error: %s\n", msg);
 
@@ -388,127 +353,9 @@ int access(const char *path, int mode)
 	return -1;
 }
 
-sint32_t _atoi(uint8_t *s)
-{
-#define ISNUM(c) ((c) >= '0' && (c) <= '9')
-
-  register uint32_t i = 0;
-  register uint32_t sign = 0;
-  register uint8_t *p = s;
-
-  /* Conversion starts at the first numeric character or sign. */
-  while(*p && !ISNUM(*p) && *p != '-') p++;
-
-  /*
-     If we got a sign, set a flag.
-     This will negate the value before return.
-   */
-  if(*p == '-')
-    {
-      sign++;
-      p++;
-    }
-
-  /* Don't care when 'u' overflows (Bug?) */
-  while(ISNUM(*p))
-    {
-      i *= 10;
-      i += *p++ - '0';
-    }
-
-  /* Return according to sign */
-  if(sign)
-    return - i;
-  else
-    return i;
-
-#undef ISNUM
-}
-
-int islower(int c)
-{
-	if (c < 'a')
-		return 0;
-
-	if (c > 'z')
-		return 0;
-
-	// passed both criteria, so it
-	// is a lower case alpha char
-	return 1;
-}
-
-int _toupper(int c)
-{
-	if ( islower( c ) ){
-		c -= 32;
-	}
-	return c;
-}
-
 /**********************************************************************/
 
-void psp_do_cheat(int cheat)
-{
-    event_t event;
-    char *str;
-    int i;
-
-	switch (cheat)
-	{
-		case 1: // God Mode
-		str = "iddqd";
-		break;
-		case 2: // Fucking Arsenal
-		str = "idfa";
-		break;
-		case 3: // Key Full Ammo
-		str = "idkfa";
-		break;
-		case 4: // No Clipping
-		str = "idclip";
-		break;
-		case 5: // Toggle Map
-		str = "iddt";
-		break;
-		case 6: // Invincible with Chainsaw
-		str = "idchoppers";
-		break;
-		case 7: // Berserker Strength Power-up
-		str = "idbeholds";
-		break;
-		case 8: // Invincibility Power-up
-		str = "idbeholdv";
-		break;
-		case 9: // Invisibility Power-Up
-		str = "idbeholdi";
-		break;
-		case 10: // Automap Power-up
-		str = "idbeholda";
-		break;
-		case 11: // Anti-Radiation Suit Power-up
-		str = "idbeholdr";
-		break;
-		case 12: // Light-Amplification Visor Power-up
-		str = "idbeholdl";
-		break;
-		default:
-		return;
-	}
-
-	for (i=0; i<strlen(str); i++)
-	{
-        event.type = ev_keydown;
-        event.data1 = str[i];
-        D_PostEvent (&event);
-        event.type = ev_keyup;
-        event.data1 = str[i];
-        D_PostEvent (&event);
-	}
-}
-
 extern boolean menuactive;
-extern int psp_weapon_change;
 
 #define PSP_NUMSLOTS 7
 
@@ -597,6 +444,32 @@ static void psp_tapkey (int key)
     psp_postkey (ev_keyup, key);
 }
 
+// types the cheat code; cheat = launcher cheat list index, 0 = none
+static void psp_do_cheat(int cheat)
+{
+    static const char *codes[] = {
+        0,
+        "iddqd",      // God Mode
+        "idfa",       // Fucking Arsenal
+        "idkfa",      // Key Full Ammo
+        "idclip",     // No Clipping
+        "iddt",       // Toggle Map
+        "idchoppers", // Invincible with Chainsaw
+        "idbeholds",  // Berserker Strength Power-up
+        "idbeholdv",  // Invincibility Power-up
+        "idbeholdi",  // Invisibility Power-Up
+        "idbeholda",  // Automap Power-up
+        "idbeholdr",  // Anti-Radiation Suit Power-up
+        "idbeholdl"   // Light-Amplification Visor Power-up
+    };
+    const char *c;
+
+    if (cheat < 1 || cheat >= (int)(sizeof(codes) / sizeof(codes[0])))
+        return;
+    for (c = codes[cheat]; *c; c++)
+        psp_tapkey (*c);
+}
+
 // hold a key while a button is down (edge triggered)
 static void psp_holdkey (u32 cur, u32 previous, u32 button, int key, int allowed)
 {
@@ -608,11 +481,28 @@ static void psp_holdkey (u32 cur, u32 previous, u32 button, int key, int allowed
 
 #define DPAD_MASK (PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LEFT | PSP_CTRL_RIGHT)
 
+// Raw stick reading (0..255) to -127..127 using the launcher calibration:
+// the rest position maps to 0 and the measured travel on each side to full
+// tilt, so a worn or off-centre stick still reaches run speed both ways.
+static int psp_stick_axis (int raw, int center, int min, int max)
+{
+    int d = raw - center;
+    int range = d > 0 ? max - center : center - min;
+
+    // not calibrated, or the stick was barely moved while calibrating
+    if (range < 32)
+        range = 127;
+    d = d * 127 / range;
+    return d > 127 ? 127 : d < -127 ? -127 : d;
+}
+
+#define STICK_DEADZONE 24
+
 // analog stick as a DPad, with hysteresis so it doesn't chatter
 static u32 psp_stick_dirs (SceCtrlData *pad, u32 previous)
 {
-    int dx = pad->Lx - stick_cx;
-    int dy = pad->Ly - stick_cy;
+    int dx = psp_stick_axis(pad->Lx, stick_cx, stick_minx, stick_maxx);
+    int dy = psp_stick_axis(pad->Ly, stick_cy, stick_miny, stick_maxy);
     u32 dirs = 0;
 
     if (dx < -(previous & PSP_CTRL_LEFT ? 40 : 80))
@@ -636,15 +526,11 @@ void psp_getevents (void)
     event_t mouseevent;
     short mousex, mousey;
     static u32 previous = -1;
-	static int rx, ry;
 	u32 cur, sel, dirs;
 
 	sceCtrlReadBufferPositive(&pad, 1);
 	if (previous == -1)
-	{
 		previous = pad.Buttons;
-		rx = ry = abs(stick_cx - 128) > 16 || abs(stick_cy - 128) > 16 ? 32 : 24;
-	}
 
 	// movement: analog stick, or the DPad when swapped
 	mousex = mousey = 0;
@@ -661,19 +547,15 @@ void psp_getevents (void)
 	}
 	else if (!stick_disabled)
 	{
-		// we don't use the min/max yet, and center just affects the comparison
-		// rescale from the deadzone edge so full tilt = +/-127
-		int dx = pad.Lx - 128;
-		int dy = 128 - pad.Ly;
+		// calibrated to +/-127, then rescaled from the deadzone edge so
+		// full tilt is still +/-127 (stick up is forward)
+		int dx = psp_stick_axis(pad.Lx, stick_cx, stick_minx, stick_maxx);
+		int dy = -psp_stick_axis(pad.Ly, stick_cy, stick_miny, stick_maxy);
 
-		if (abs(dx) > rx)
-			mousex = (dx > 0 ? dx - rx : dx + rx) * 127 / (127 - rx);
-		if (abs(dy) > ry)
-			mousey = (dy > 0 ? dy - ry : dy + ry) * 127 / (127 - ry);
-		if (mousex > 127) mousex = 127;
-		if (mousex < -127) mousex = -127;
-		if (mousey > 127) mousey = 127;
-		if (mousey < -127) mousey = -127;
+		if (abs(dx) > STICK_DEADZONE)
+			mousex = (dx > 0 ? dx - STICK_DEADZONE : dx + STICK_DEADZONE) * 127 / (127 - STICK_DEADZONE);
+		if (abs(dy) > STICK_DEADZONE)
+			mousey = (dy > 0 ? dy - STICK_DEADZONE : dy + STICK_DEADZONE) * 127 / (127 - STICK_DEADZONE);
 	}
 
 	if (mousex || mousey)

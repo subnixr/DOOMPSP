@@ -25,13 +25,6 @@
 
 #include "doomtype.h"
 
-#ifdef __GNUG__
-#pragma interface
-#endif
-
-#ifdef __SASC
-#pragma options align=mac68k
-#endif
 
 // The data sampled per tick (single player)
 // and transmitted to other peers (multiplayer).
@@ -46,10 +39,6 @@ typedef struct
     byte	 chatchar;
     byte	 buttons;
 }  ticcmd_t;
-
-#ifdef __SASC
-#pragma options align=power
-#endif
 
 
 #endif

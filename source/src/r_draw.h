@@ -23,13 +23,6 @@
 #ifndef __R_DRAW__
 #define __R_DRAW__
 
-#ifdef AMIGA
-#include "amiga_macros.h"
-#endif
-
-#ifdef __GNUG__
-#pragma interface
-#endif
 
 
 extern lighttable_t*	dc_colormap;

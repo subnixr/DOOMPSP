@@ -27,9 +27,6 @@
 #include "r_data.h"
 
 
-#ifdef __GNUG__
-#pragma interface
-#endif
 
 
 //

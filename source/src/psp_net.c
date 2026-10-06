@@ -22,18 +22,12 @@
 #include "doomstat.h"
 
 #include "i_net.h"
+#include "psp.h"
 
 
 #define printf pspDebugScreenPrintf
 
 
-void cleanup_net (void);
-
-// set by the launcher lobby (psp_main.c) before D_DoomMain
-extern int psp_net_enabled;
-extern int psp_net_player1;              // our player number, 1 = host
-extern int psp_adhoc_numnodes;           // players in the game, us included
-extern unsigned char psp_adhoc_mac[][6]; // [0] is us, then the other players
 
 
 //
@@ -48,11 +42,6 @@ extern unsigned char psp_adhoc_mac[][6]; // [0] is us, then the other players
 #define ADHOC_DOOMPORT	5029 // 5000 + 0x1d
 
 static int ADHOC_pdp = -1;
-static int ADHOC_connected = 0;
-
-static void (*netget) (void);
-static void (*netsend) (void);
-
 
 /**********************************************************************/
 //
@@ -78,7 +67,6 @@ static void ADHOC_PacketSend (void)
     sw.cmds[c].buttons = netbuffer->cmds[c].buttons;
   }
 
-  //printf ("sending %i\n",gametic);
   sceKernelDelayThread(10);
   // a full send buffer just drops the packet, the game resends
   sceNetAdhocPdpSend (ADHOC_pdp, psp_adhoc_mac[doomcom->remotenode],
@@ -118,6 +106,12 @@ static void ADHOC_PacketGet (void)
     return;
   }
 
+  // header only up to cmds[], and no more tics than the buffer holds
+  if (len < (int)((char *)sw.cmds - (char *)&sw) || sw.numtics > BACKUPTICS) {
+    doomcom->remotenode = -1;  // no packet
+    return;
+  }
+
   doomcom->remotenode = i;   // good packet from a game player
   doomcom->datalength = len;
 
@@ -136,7 +130,6 @@ static void ADHOC_PacketGet (void)
     netbuffer->cmds[c].chatchar = sw.cmds[c].chatchar;
     netbuffer->cmds[c].buttons = sw.cmds[c].buttons;
   }
-  //printf("good packet returned\n");
 }
 
 
@@ -149,10 +142,7 @@ static void ADHOC_InitNetwork (void)
   // enters with the ad-hoc group joined and the players known (launcher lobby)
   printf("ADHOC_InitNetwork: player %d of %d\n", psp_net_player1, psp_adhoc_numnodes);
 
-  netsend = ADHOC_PacketSend;
-  netget = ADHOC_PacketGet;
   netgame = true;
-  ADHOC_connected = 1;
 
   doomcom->consoleplayer = psp_net_player1 - 1;
   doomcom->numnodes = psp_adhoc_numnodes;
@@ -166,19 +156,6 @@ static void ADHOC_InitNetwork (void)
 }
 
 /**********************************************************************/
-static void ADHOC_Shutdown (void)
-{
-  if (ADHOC_pdp >= 0) {
-    sceNetAdhocPdpDelete (ADHOC_pdp, 0);
-    ADHOC_pdp = -1;
-  }
-  if (ADHOC_connected) {
-    sceNetAdhocctlDisconnect ();
-    ADHOC_connected = 0;
-  }
-}
-
-/**********************************************************************/
 /**********************************************************************/
 //
 // I_InitNetwork
@@ -186,8 +163,6 @@ static void ADHOC_Shutdown (void)
 void I_InitNetwork (void)
 {
   printf("I_InitNetwork()\n");
-
-  atexit(cleanup_net);
 
   doomcom = malloc (sizeof (*doomcom) );
   if (!doomcom)
@@ -222,17 +197,11 @@ void I_InitNetwork (void)
 void I_NetCmd (void)
 {
   if (doomcom->command == CMD_SEND) {
-    netsend ();
+    ADHOC_PacketSend ();
   } else if (doomcom->command == CMD_GET) {
-    netget ();
+    ADHOC_PacketGet ();
   } else
     I_Error ("Bad net cmd: %i\n",doomcom->command);
-}
-
-/**********************************************************************/
-void cleanup_net (void)
-{
-  ADHOC_Shutdown ();
 }
 
 /**********************************************************************/

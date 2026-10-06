@@ -22,6 +22,7 @@
 #include "m_swap.h"
 
 #include "doomdef.h"
+#include "psp.h"
 
 #define printf pspDebugScreenPrintf
 
@@ -30,7 +31,6 @@
 // number of channels available for sound effects
 
 extern int numChannels;
-extern char psp_home[256];
 
 /**********************************************************************/
 
@@ -83,15 +83,15 @@ static struct Voice midiVoice[256];
 // The actual lengths of all sound effects.
 static int lengths[NUMSFX];
 
-static ULONG NUM_SAMPLES = 1280;       // 1260 = 35Hz, 630 = 70Hz, 315 = 140Hz
+static ULONG NUM_SAMPLES = 1280;       // 1280 = 35Hz, 640 = 70Hz, 320 = 140Hz
 static ULONG BEATS_PER_PASS = 4;       // 4 = 35Hz, 2 = 70Hz, 1 = 140Hz
 
 static int sound_status = 0;
+static int sfx_enabled = 1;            // cleared by -nosfx; music still plays
 
 static int bufferEmpty;
-static int bufferFull;
 
-static short pcmout1[1280 * 2]; // 1260 stereo samples
+static short pcmout1[1280 * 2]; // 1280 stereo samples
 static short pcmout2[1280 * 2];
 static int pcmflip = 0;
 static int pcmchannel = 0;
@@ -157,7 +157,6 @@ static float pitch_table[256];
 
 static float master_vol =  64.0f;
 
-static int musicdies=-1;
 static int music_okay = 0;
 
 static void *midi_instruments = NULL;
@@ -178,7 +177,7 @@ void fill_buffer(short *buffer);
 void Sfx_Start(char *wave, int cnum, int step, int vol, int sep, int length);
 void Sfx_Update(int cnum, int step, int vol, int sep);
 void Sfx_Stop(int cnum);
-int Sfx_Done(int cnum);
+int Sfx_Playing(int cnum);
 
 void Mus_SetVol(int vol);
 int Mus_Register(void *musdata);
@@ -223,12 +222,6 @@ static void *getsfx (char *sfxname, int *len)
 
   size = W_LumpLength (sfxlump);
 
-  // Debug.
-  // fprintf( stderr, "." );
-  // fprintf( stderr, " -loading  %s (lump %d, %d bytes)\n",
-  //         sfxname, sfxlump, size );
-  //fflush( stderr );
-
   sfx = (unsigned char*)W_CacheLumpNum (sfxlump, PU_STATIC);
 
   // Allocate from zone memory.
@@ -256,19 +249,12 @@ static void *getsfx (char *sfxname, int *len)
 // Need swap routines because the MIDI file was made on the Amiga and
 //   is in big endian format. :)
 
-#ifdef __BIG_ENDIAN__
-
-#define WSWAP(x) x
-#define LSWAP(x) x
-
-#else
-
-UWORD WSWAP(UWORD x)
+static UWORD WSWAP(UWORD x)
 {
     return (UWORD)((x>>8) | (x<<8));
 }
 
-ULONG LSWAP(ULONG x)
+static ULONG LSWAP(ULONG x)
 {
     return
 	(x>>24)
@@ -276,8 +262,6 @@ ULONG LSWAP(ULONG x)
 	| ((x<<8) & 0xff0000)
 	| (x<<24);
 }
-
-#endif
 
 int fillBuffer(SceSize args, void *argp)
 {
@@ -289,15 +273,14 @@ int fillBuffer(SceSize args, void *argp)
   int i;
   ULONG *miptr;
   struct midiHdr *mhdr;
-  char str[256];
+  char str[512];
 
   numChannels = SFX_VOICES;
 
   music_okay = 0;
 
   // try to set up MIDI instruments
-  strcpy(str, psp_home);
-  strcat(str, "midi/MIDI_Instruments");
+  snprintf(str, sizeof(str), "%smidi/MIDI_Instruments", psp_home);
   hnd = fopen(str,"rb");
   if (hnd) {
     fseek(hnd, 0, SEEK_END);
@@ -307,7 +290,6 @@ int fillBuffer(SceSize args, void *argp)
     midi_instruments = malloc(size);
     if (midi_instruments) {
       fread((void *)midi_instruments, 1, size, hnd);
-      fclose(hnd);
       // set midiVoice[] from file
       miptr = (ULONG *)midi_instruments;
       for(i=0; i<256; i++) {
@@ -345,7 +327,7 @@ int fillBuffer(SceSize args, void *argp)
 		sceKernelWaitSema(bufferEmpty, 1, 0);
 		numSamples = 0;
 		fillbuf = pcmflip ? (int)pcmout2 : (int)pcmout1;
-		while (numSamples < 1260)
+		while (numSamples < 1280)
 		{
 			fill_buffer((short *)(fillbuf + (numSamples<<2)));
 			numSamples += NUM_SAMPLES;
@@ -384,7 +366,6 @@ void I_InitSound (void)
     int audioThid;
 
 	printf("I_InitSound()\n");
-	sceKernelDelayThread(1*1000*1000);
 
 	// create semaphore:
 	bufferEmpty = sceKernelCreateSema("bufferEmpty", 0, 1, 1, 0);
@@ -404,10 +385,8 @@ void I_InitSound (void)
 	sound_status = 1;
 
 	printf("I_InitSound: started audio thread\n");
-	sceKernelDelayThread(1*1000*1000);
 
-  if (M_CheckParm("-nosfx"))
-    return;
+  sfx_enabled = !M_CheckParm("-nosfx");
 
   if (M_CheckParm("-music")) {
     if (M_CheckParm("-70Hz")) {
@@ -430,10 +409,11 @@ void I_InitSound (void)
 	}
 	sceKernelStartThread(bufferThid, 0, NULL);
 
-	for (i=0; i<10; i++)
+	// up to 10 seconds: it loads the MIDI instruments first
+	for (i=0; i<1000; i++)
 	{
 		if (sound_status == 2) break;
-		sceKernelDelayThread(1000*1000);
+		sceKernelDelayThread(10*1000);
 	}
 
   printf ("I_InitSound: PSP audio initialized.\n" );
@@ -441,7 +421,7 @@ void I_InitSound (void)
   changepitch = M_CheckParm ("-changepitch");
 
   // Initialize external data (all sounds) at start, keep static.
-  for (i = 1; i < NUMSFX; i++) {
+  for (i = 1; sfx_enabled && i < NUMSFX; i++) {
     // Alias? Example is the chaingun sound linked to pistol.
     if (!S_sfx[i].link) {
       // Load data from WAD file.
@@ -449,10 +429,11 @@ void I_InitSound (void)
     } else {
       // Previously loaded already?
       S_sfx[i].data = S_sfx[i].link->data;
-      lengths[i] = lengths[(S_sfx[i].link - S_sfx)/sizeof(sfxinfo_t)];
+      lengths[i] = lengths[S_sfx[i].link - S_sfx];
     }
   }
-  printf ("I_InitSound: Pre-cached all sound data.\n");
+  if (sfx_enabled)
+    printf ("I_InitSound: Pre-cached all sound data.\n");
 
   // fill in pitch wheel table
   for (i=0; i<128; i++)
@@ -462,8 +443,6 @@ void I_InitSound (void)
 
     // Finished initialization.
     printf ("I_InitSound: Sound module ready.\n");
-	sceKernelDelayThread(1*1000*1000);
-
 }
 
 /**********************************************************************/
@@ -482,16 +461,10 @@ void I_SubmitSound (void)
 // ... shut down and relase at program termination.
 void I_ShutdownSound (void)
 {
-//  fprintf (stderr, "I_ShutdownSound:");
-//  fflush( stderr );
-
   if (sound_status > 0) {
     sound_status = 0xDEADBEEF;         // DIE, DAEMON! DIE!!
     sceKernelDelayThread(1*1000*1000);
   }
-
-//  fprintf (stderr, " Sound module closed.\n");
-//  fflush( stderr );
 }
 
 /**********************************************************************/
@@ -512,8 +485,6 @@ int I_GetSfxLumpNum (sfxinfo_t *sfx)
 {
   char namebuf[9];
 
-//  fprintf (stderr, "I_GetSfxLumpNum()\n");
-
   sprintf(namebuf, "ds%s", sfx->name);
   return W_GetNumForName(namebuf);
 }
@@ -528,10 +499,9 @@ int I_StartSound (
   int pitch,
   int priority )
 {
-//  fprintf (stderr, "I_StartSound(%d,%d,%d,%d,%d,%d)\n", id, cnum, vol, sep, pitch, priority);
   psp_step = "I_StartSound";
 
-  if (sound_status == 2) {
+  if (sound_status == 2 && sfx_enabled) {
     I_StopSound(cnum);
     Sfx_Start (S_sfx[id].data, cnum, changepitch ? freqs[pitch] : 11025,
                vol, sep, lengths[id]);
@@ -543,8 +513,6 @@ int I_StartSound (
 // Stops a sound channel.
 void I_StopSound(int handle)
 {
-//  fprintf (stderr, "I_StopSound(%d)\n", handle);
-
   if (sound_status == 2)
     Sfx_Stop(handle);
 }
@@ -555,10 +523,8 @@ void I_StopSound(int handle)
 // Returns 0 if no longer playing, 1 if playing.
 int I_SoundIsPlaying(int handle)
 {
-//  fprintf (stderr, "I_SoundIsPlaying(%d)\n", handle);
-
   if (sound_status == 2)
-    return Sfx_Done(handle) ? 1 : 0;
+    return Sfx_Playing(handle);
 
   return 0;
 }
@@ -573,8 +539,6 @@ I_UpdateSoundParams
   int		sep,
   int		pitch )
 {
-//  fprintf (stderr, "I_UpdateSoundParams(%d,%d,%d,%d)\n", handle, vol, sep, pitch);
-
   if (sound_status == 2)
     Sfx_Update(handle, changepitch ? freqs[pitch] : 11025, vol, sep);
 }
@@ -594,15 +558,6 @@ void I_InitMusic(void)
 
   if (M_CheckParm("-music") && (music_okay == 1)) {
     printf (" Music okay.\n");
-
-    if (M_CheckParm("-70Hz")) {
-      NUM_SAMPLES = 630;
-      BEATS_PER_PASS = 2;
-    } else if (M_CheckParm("-140Hz")) {
-      NUM_SAMPLES = 315;
-      BEATS_PER_PASS = 1;
-    }
-
     return;
   }
 
@@ -613,15 +568,12 @@ void I_InitMusic(void)
 /**********************************************************************/
 void I_ShutdownMusic(void)
 {
-//  fprintf (stderr, "I_ShutdownMusic()\n");
 }
 
 /**********************************************************************/
 // Volume.
 void I_SetMusicVolume(int volume)
 {
-//  fprintf (stderr, "I_SetMusicVolume(%d)\n", volume);
-
   snd_MusicVolume = volume;
 
   if (music_okay)
@@ -632,8 +584,6 @@ void I_SetMusicVolume(int volume)
 // PAUSE game handling.
 void I_PauseSong(int handle)
 {
-//  fprintf (stderr, "I_PauseSong(%d)\n", handle);
-
   if (music_okay)
     Mus_Pause(handle);
 }
@@ -641,8 +591,6 @@ void I_PauseSong(int handle)
 /**********************************************************************/
 void I_ResumeSong(int handle)
 {
-//  fprintf (stderr, "I_ResumeSong(%d)\n", handle);
-
   if (music_okay)
     Mus_Resume(handle);
 }
@@ -651,8 +599,6 @@ void I_ResumeSong(int handle)
 // Registers a song handle to song data.
 int I_RegisterSong(void *data)
 {
-//  fprintf (stderr, "I_RegisterSong(%08x)\n", data);
-
   if (music_okay)
     return Mus_Register(data);
 
@@ -669,96 +615,75 @@ I_PlaySong
 ( int		handle,
   int		looping )
 {
-//  fprintf (stderr, "I_PlaySong(%d,%d)\n", handle, looping);
-
   if (music_okay)
     Mus_Play(handle, looping);
-
-  musicdies = gametic + TICRATE*30;
 }
 
 /**********************************************************************/
 // Stops a song over 3 seconds.
 void I_StopSong(int handle)
 {
-//  fprintf (stderr, "I_StopSong(%d)\n", handle);
-
   if (music_okay)
     Mus_Stop(handle);
-
-  musicdies = 0;
 }
 
 /**********************************************************************/
 // See above (register), then think backwards
 void I_UnRegisterSong(int handle)
 {
-//  fprintf (stderr, "I_UnRegisterSong(%d)\n", handle);
-
   if (music_okay)
     Mus_Unregister(handle);
 }
 
 /**********************************************************************/
 
-void _STDaudio_cleanup (void)
+// left/right volume (0..1) for a 0..127 volume and a 0..255 pan
+static void pan_volume(float vol, float pan, float *ltvol, float *rtvol)
 {
-  I_ShutdownSound ();
-  I_ShutdownMusic ();
+  *ltvol = (vol - (vol * pan * pan) / 65536.0f) / 127.0f;
+  pan -= 256.0f;
+  *rtvol = (vol - (vol * pan * pan) / 65536.0f) / 127.0f;
 }
 
-/**********************************************************************/
+// music channel: refresh left/right from its volume and pan
+static void channel_volume(struct Channel *chan)
+{
+  pan_volume(chan->vol, chan->pan, &chan->ltvol, &chan->rtvol);
+}
+
+// game volume 0..15 to mixer volume 7..127
+static float sfx_volume(int volume)
+{
+  return (volume > 15) ? 127.0f : (float)volume * 8.0f + 7.0f;
+}
 
 void Sfx_Start(char *wave, int cnum, int step, int volume, int seperation, int length)
 {
-  float vol = (float)volume;
-  float sep = (float)seperation;
-
-  vol = (volume > 15) ? 127.0f : vol * 8.0f + 7.0f;
-
-  //Forbid();
   audVoice[cnum].wave = wave + 8;
   audVoice[cnum].index = 0.0f;
   audVoice[cnum].step = (float)step / 44100.0f;
   audVoice[cnum].loop = 0;
   audVoice[cnum].length = length - 8;
-  audVoice[cnum].ltvol = (vol - (vol * sep * sep) / 65536.0f) / 127.0f;
-  sep -= 256.0f;
-  audVoice[cnum].rtvol = (vol - (vol * sep * sep) / 65536.0f) / 127.0f;
+  pan_volume(sfx_volume(volume), (float)seperation,
+             &audVoice[cnum].ltvol, &audVoice[cnum].rtvol);
   audVoice[cnum].flags = 0x81;
-  //Permit();
 }
 
 void Sfx_Update(int cnum, int step, int volume, int seperation)
 {
-  float vol = (float)volume;
-  float sep = (float)seperation;
-
-  vol = (volume > 15) ? 127.0f : vol * 8.0f + 7.0f;
-
-  //Forbid();
   audVoice[cnum].step = (float)step / 44100.0f;
-  audVoice[cnum].ltvol = (vol - (vol * sep * sep) / 65536.0f) / 127.0f;
-  sep -= 256.0f;
-  audVoice[cnum].rtvol = (vol - (vol * sep * sep) / 65536.0f) / 127.0f;
-  //Permit();
+  pan_volume(sfx_volume(volume), (float)seperation,
+             &audVoice[cnum].ltvol, &audVoice[cnum].rtvol);
 }
 
 void Sfx_Stop(int cnum)
 {
-  //Forbid();
   audVoice[cnum].flags &= 0xFE;
-  //Permit();
 }
 
-int Sfx_Done(int cnum)
+int Sfx_Playing(int cnum)
 {
-  int done;
-
-  //Forbid();
-  done = (audVoice[cnum].flags & 0x01) ? (int)audVoice[cnum].index + 1 : 0;
-  //Permit();
-  return done;
+  return (audVoice[cnum].flags & 0x01) != 0;
 }
 
 /**********************************************************************/
@@ -845,6 +770,12 @@ void Mus_Resume(int handle)
 
 /**********************************************************************/
 
+// saturate instead of wrapping around when many voices add up
+static inline short mix_clamp(int s)
+{
+  return s > 32767 ? 32767 : s < -32768 ? -32768 : s;
+}
+
 void fill_buffer(short *buffer)
 {
   float index;
@@ -881,7 +812,6 @@ void fill_buffer(short *buffer)
         int voice;
         int inst;
         float volume;
-        float pan;
 
 nextEvent:        // next event
         do {
@@ -915,10 +845,7 @@ nextEvent:        // next event
                 mus_channel[channel].map[(ULONG)note] = voice + 1;
                 if (volume >= 0.0f) {
                   mus_channel[channel].vol = volume;
-                  pan = mus_channel[channel].pan;
-                  mus_channel[channel].ltvol = (volume - (volume * pan * pan) / 65536.0f) / 127.0f;
-                  pan -= 256.0f;
-                  mus_channel[channel].rtvol = (volume - (volume * pan * pan) / 65536.0f) / 127.0f;
+                  channel_volume(&mus_channel[channel]);
                 }
                 audVoice[voice + SFX_VOICES].ltvol = mus_channel[channel].ltvol;
                 audVoice[voice + SFX_VOICES].rtvol = mus_channel[channel].rtvol;
@@ -963,19 +890,13 @@ nextEvent:        // next event
                   break;
                 case 3:
                   // set channel volume
-                  mus_channel[channel].vol = volume = (float)value;
-                  pan = mus_channel[channel].pan;
-                  mus_channel[channel].ltvol = (volume - (volume * pan * pan) / 65536.0f) / 127.0f;
-                  pan -= 256.0f;
-                  mus_channel[channel].rtvol = (volume - (volume * pan * pan) / 65536.0f) / 127.0f;
+                  mus_channel[channel].vol = (float)value;
+                  channel_volume(&mus_channel[channel]);
                   break;
                 case 4:
                   // set channel pan
-                  mus_channel[channel].pan = pan = (float)value;
-                  volume = mus_channel[channel].vol;
-                  mus_channel[channel].ltvol = (volume - (volume * pan * pan) / 65536.0f) / 127.0f;
-                  pan -= 256.0f;
-                  mus_channel[channel].rtvol = (volume - (volume * pan * pan) / 65536.0f) / 127.0f;
+                  mus_channel[channel].pan = (float)value;
+                  channel_volume(&mus_channel[channel]);
                   break;
               }
               break;
@@ -1066,8 +987,8 @@ mix:
           }
         }
         sample = (wvbuff) ? (float)wvbuff[(int)index] : 0.0f;  // for safety
-        smpbuff[iy] += (short)(sample * ltvol * master_vol);
-        smpbuff[iy + 1] += (short)(sample * rtvol * master_vol);
+        smpbuff[iy] = mix_clamp(smpbuff[iy] + (int)(sample * ltvol * master_vol));
+        smpbuff[iy + 1] = mix_clamp(smpbuff[iy + 1] + (int)(sample * rtvol * master_vol));
         index += step;
       }
       audVoice[ix].index = index;

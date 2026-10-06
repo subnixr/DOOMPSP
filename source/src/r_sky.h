@@ -24,9 +24,6 @@
 #define __R_SKY__
 
 
-#ifdef __GNUG__
-#pragma interface
-#endif
 
 // SKY, store the number for name.
 #define			SKYFLATNAME  "F_SKY1"

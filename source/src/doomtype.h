@@ -27,22 +27,13 @@
 
 #ifndef __BYTEBOOL__
 #define __BYTEBOOL__
-// Fixed to use builtin bool type with C++.
-#ifdef __cplusplus
-typedef bool boolean;
-#else
 typedef enum {false, true} boolean;
-#endif
 #ifndef byte
 typedef unsigned char byte;
 #endif
 #endif
 
 
-// Predefined with some OS.
-#ifdef LINUX
-#include <values.h>
-#else
 #define MAXCHAR		((char)0x7f)
 #define MAXSHORT	((short)0x7fff)
 
@@ -59,7 +50,6 @@ typedef unsigned char byte;
 #define MININT		((int)0x80000000)	
 #endif
 #define MINLONG		((long)0x80000000)
-#endif
 
 
 

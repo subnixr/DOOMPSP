@@ -29,12 +29,6 @@ rcsid[] = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp $";
 #include <pspdebug.h>
 #include <psprtc.h>
 
-#ifndef PSP //__VBCC__
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -71,7 +65,7 @@ rcsid[] = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp $";
 
 #include "m_menu.h"
 
-extern char psp_home[256];
+#include "psp.h"
 
 
 
@@ -520,23 +514,14 @@ menu_t  SaveDef =
 //
 void M_ReadSaveStrings(void)
 {
-#ifdef PSP //__VBCC__
-	FILE						*handle;
-#else
-    int             handle;
-#endif
-    int             count;
+    FILE    *handle;
     int             i;
-    char    name[256];
+    char    name[PSP_PATH_MAX];
 
     for (i = 0;i < load_end;i++)
     {
-	if (M_CheckParm("-cdrom"))
-	    sprintf(name,"c:\\doomdata\\"SAVEGAMENAME"%d.dsg",i);
-	else
-	    sprintf(name,"%ssaves/"SAVEGAMENAME"%d.dsg",psp_home,i);
+	snprintf(name,sizeof(name),"%ssaves/"SAVEGAMENAME"%d.dsg",psp_home,i);
 
-#ifdef PSP //__VBCC__
 	handle = fopen(name, "rb");
 	if (handle == NULL)
 	{
@@ -544,19 +529,8 @@ void M_ReadSaveStrings(void)
 		LoadMenu[i].status = 0;
 		continue;
 	}
-	count = fread(&savegamestrings[i], 1, SAVESTRINGSIZE, handle);
+	fread(&savegamestrings[i], 1, SAVESTRINGSIZE, handle);
 	fclose(handle);
-#else
-	handle = open (name, O_RDONLY | 0, 0666);
-	if (handle == -1)
-	{
-	    strcpy(&savegamestrings[i][0],EMPTYSTRING);
-	    LoadMenu[i].status = 0;
-	    continue;
-	}
-	count = read (handle, &savegamestrings[i], SAVESTRINGSIZE);
-	close (handle);
-#endif
 	LoadMenu[i].status = 1;
     }
 }
@@ -604,12 +578,9 @@ void M_DrawSaveLoadBorder(int x,int y)
 //
 void M_LoadSelect(int choice)
 {
-    char    name[256];
+    char    name[PSP_PATH_MAX];
 
-    if (M_CheckParm("-cdrom"))
-	sprintf(name,"c:\\doomdata\\"SAVEGAMENAME"%d.dsg",choice);
-    else
-	sprintf(name,"%ssaves/"SAVEGAMENAME"%d.dsg",psp_home,choice);
+    snprintf(name,sizeof(name),"%ssaves/"SAVEGAMENAME"%d.dsg",psp_home,choice);
     G_LoadGame (name);
     M_ClearMenus ();
 }

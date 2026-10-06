@@ -30,9 +30,6 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 #include "doomtype.h"
 #include "i_system.h"
 
-#ifdef __GNUG__
-#pragma implementation "m_fixed.h"
-#endif
 #include "m_fixed.h"
 
 

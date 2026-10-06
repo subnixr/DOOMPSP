@@ -24,22 +24,12 @@
 #define __M_SWAP__
 
 
-#ifdef __GNUG__
-#pragma interface
-#endif
 
 
 // Endianess handling.
-// WAD files are stored little endian.
-#ifdef __BIG_ENDIAN__
-unsigned short	SwapSHORT(unsigned short);
-unsigned long	SwapLONG(unsigned long);
-#define SWAPSHORT(x)	((short)SwapSHORT((unsigned short) (x)))
-#define SWAPLONG(x)     ((long)SwapLONG((unsigned long) (x)))
-#else
+// WAD files are stored little endian, and so is the PSP.
 #define SWAPSHORT(x)	(x)
 #define SWAPLONG(x)     (x)
-#endif
 
 
 

@@ -500,7 +500,7 @@ V_DrawPatchInDirectFlipped
   int		w;
 
   int deltax,deltay,deltaxi,deltayi,stretchx,stretchy;
-  int srccol,collen;
+  int srccol;
 
   y	-=	SWAPSHORT(patch->topoffset);
   x	-=	SWAPSHORT(patch->leftoffset);
@@ -538,7 +538,7 @@ V_DrawPatchInDirectFlipped
     while (column->topdelta != 0xff) {
       source = (byte *)column +	3;
       dest = desttop+((column->topdelta*deltay)>>16)*SCREENWIDTH;
-      collen = count = (column->length*deltay)>>16;
+      count = (column->length*deltay)>>16;
       srccol=0;
       while (count--) {
         *dest=source[srccol>>16];

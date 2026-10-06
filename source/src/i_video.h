@@ -26,9 +26,6 @@
 
 #include "doomtype.h"
 
-#ifdef __GNUG__
-#pragma interface
-#endif
 
 
 // Called by D_DoomMain,

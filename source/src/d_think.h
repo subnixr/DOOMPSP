@@ -26,13 +26,6 @@
 #define __D_THINK__
 
 
-#ifdef __GNUG__
-#pragma interface
-#endif
-
-#ifdef __SASC
-#pragma options align=mac68k
-#endif
 
 //
 // Experimental stuff.
@@ -69,10 +62,6 @@ typedef struct thinker_s
     think_t		 function;
     
 }  thinker_t;
-
-#ifdef __SASC
-#pragma options align=power
-#endif
 
 #endif
 //-----------------------------------------------------------------------------

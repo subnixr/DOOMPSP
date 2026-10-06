@@ -26,9 +26,6 @@
 #include "doomdef.h"
 
 
-#ifdef __GNUG__
-#pragma interface
-#endif
 
 //#define MAXVISSPRITES  	128
 #define MAXVISSPRITES  	256
@@ -45,16 +42,6 @@ extern short		*negonearray;
 extern short		*screenheightarray;
 
 // vars for R_DrawMaskedColumn
-
-//#ifdef AMIGA
-//#include "amiga_macros.h"
-//
-//#define TYPE_NORMAL 0
-//#define TYPE_FUZZ   1
-//#define TYPE_TRANSL 2
-//
-//void REGARGS R_DrawMaskedColumnAmi (REG(a0, column_t* column), REG(d0, type));
-//#endif
 
 extern short*		mfloorclip;
 extern short*		mceilingclip;

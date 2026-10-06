@@ -29,29 +29,11 @@ rcsid[] = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $";
 #include <pspkernel.h>
 #include <pspdebug.h>
 
-#ifdef NORMALUNIX
-#if !defined(__SASC) && !defined(__GNUC__) && !defined(__VBCC__) && !defined(PSP)
-#include <ctype.h>
-#include <sys/types.h>
-#include <string.h>
-#include <unistd.h>
-#include <malloc.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <alloca.h>
-#define O_BINARY 0
-#else
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#ifdef __GNUC__
 #include <sys/stat.h>
-#elif !defined(__VBCC__)
-#include <stat.h>
-#endif
-#endif
-#endif
 
 #define printf pspDebugScreenPrintf
 
@@ -61,9 +43,6 @@ rcsid[] = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $";
 #include "i_system.h"
 #include "z_zone.h"
 
-#ifdef __GNUG__
-#pragma implementation "w_wad.h"
-#endif
 #include "w_wad.h"
 
 
@@ -91,7 +70,7 @@ typedef struct
 static wadfile_t	wadfiles[MAXWADFILES];
 static int		numwadfiles;
 
-extern volatile int	psp_resume_count;	// bumped by power callback
+#include "psp.h"
 static int		seen_resume_count;
 
 // Device (ms0:/ef0:) may still be remounting right after resume.
@@ -124,31 +103,6 @@ static void W_ReopenFiles (void)
 }
 
 
-#ifndef PSP
-#if !defined(__SASC)
-#define strcmpi	strcasecmp
-
-void strupr (char* s)
-{
-    while (*s) { *s = toupper(*s); s++; }
-}
-#endif
-#endif
-
-#ifdef __VBCC__
-int filelength (int handle)
-{
-		int size;
-		int oldpos;
-
-		oldpos = ftell ((FILE *)handle);
-		fseek((FILE *)handle, 0, SEEK_END);
-		size = ftell ((FILE *)handle);
-		fseek ((FILE *)handle, oldpos, SEEK_SET);
-
-		return size;
-}
-#else
 int filelength (int handle)
 {
     struct stat	*fileinfo;
@@ -162,7 +116,6 @@ int filelength (int handle)
 
     return size;
 }
-#endif
 
 void
 ExtractFileBase
@@ -258,11 +211,7 @@ void W_AddFile (char *filename)
 	// single lump file
 	fileinfo = &singleinfo;
 	singleinfo.filepos = 0;
-#ifdef __VBCC__
-	singleinfo.size = SWAPLONG(filelength((int)handle));
-#else
 	singleinfo.size = SWAPLONG(filelength(fileno(handle)));
-#endif
 	ExtractFileBase (filename, singleinfo.name);
 	numlumps++;
     }
@@ -643,66 +592,4 @@ W_CacheLumpName
 }
 
 
-#if 0
-//
-// W_Profile
-//
-FAR int		info[2500][10];
-int		profilecount;
-
-void W_Profile (void)
-{
-    int		i;
-    memblock_t*	block;
-    void*	ptr;
-    char	ch;
-    FILE*	f;
-    int		j;
-    char	name[9];
-
-
-    for (i=0 ; i<numlumps ; i++)
-    {
-	ptr = lumpcache[i];
-	if (!ptr)
-	{
-	    ch = ' ';
-	    continue;
-	}
-	else
-	{
-	    block = (memblock_t *) ( (byte *)ptr - sizeof(memblock_t));
-	    if (block->tag < PU_PURGELEVEL)
-		ch = 'S';
-	    else
-		ch = 'P';
-	}
-	info[i][profilecount] = ch;
-    }
-    profilecount++;
-
-    f = fopen ("waddump.txt","w");
-    name[8] = 0;
-
-    for (i=0 ; i<numlumps ; i++)
-    {
-	memcpy (name,lumpinfo[i].name,8);
-
-	for (j=0 ; j<8 ; j++)
-	    if (!name[j])
-		break;
-
-	for ( ; j<8 ; j++)
-	    name[j] = ' ';
-
-	fprintf (f,"%s ",name);
-
-	for (j=0 ; j<profilecount ; j++)
-	    fprintf (f,"    %c",info[i][j]);
-
-	fprintf (f,"\n");
-    }
-    fclose (f);
-}
-#endif
 

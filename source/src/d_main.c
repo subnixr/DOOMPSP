@@ -24,9 +24,7 @@
 //
 //-----------------------------------------------------------------------------
 
-#ifdef PSP //__VBCC__
 #define R_OK 0
-#endif
 
 static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
@@ -37,17 +35,13 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include <pspkernel.h>
 #include <pspdebug.h>
 
-#ifdef NORMALUNIX
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef __VBCC__
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#endif
-#endif
 
 
 #define printf pspDebugScreenPrintf
@@ -91,7 +85,7 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
 #include "d_main.h"
 
-extern char psp_home[256];
+#include "psp.h"
 
 //
 // D-DoomLoop()
@@ -432,18 +426,6 @@ void D_DoomLoop (void)
 
         // Update display, next frame, with current state.
         D_Display ();
-
-#if 0
-#ifndef SNDSERV
-        // Sound mixing for the buffer is snychronous.
-        I_UpdateSound();
-#endif
-        // Synchronous sound output is explicitly called.
-#ifndef SNDINTR
-        // Update sound output.
-        I_SubmitSound();
-#endif
-#endif
     }
 }
 
@@ -744,79 +726,6 @@ void IdentifyVersion (void)
 }
 
 //
-// Find a Response File
-//
-void FindResponseFile (void)
-{
-    int             i;
-
-    for (i = 1;i < myargc;i++)
-        if (myargv[i][0] == '@')
-        {
-            FILE *          handle;
-            int             size;
-            int             k;
-            int             index;
-            int             indexinfile;
-            char    *infile;
-            char    *file;
-            char    *moreargs[20];
-            char    *firstargv;
-
-            // READ THE RESPONSE FILE INTO MEMORY
-            handle = fopen (&myargv[i][1],"rb");
-            if (!handle)
-            {
-                printf ("\nNo such response file!");
-                exit(1);
-            }
-            printf("Found response file %s!\n",&myargv[i][1]);
-            fseek (handle,0,SEEK_END);
-            size = ftell(handle);
-            fseek (handle,0,SEEK_SET);
-            file = malloc (size);
-            fread (file,size,1,handle);
-            fclose (handle);
-
-            // KEEP ALL CMDLINE ARGS FOLLOWING @RESPONSEFILE ARG
-            for (index = 0,k = i+1; k < myargc; k++)
-                moreargs[index++] = myargv[k];
-
-            firstargv = myargv[0];
-            myargv = malloc(sizeof(char *)*MAXARGVS);
-            memset(myargv,0,sizeof(char *)*MAXARGVS);
-            myargv[0] = firstargv;
-
-            infile = file;
-            indexinfile = k = 0;
-            indexinfile++;  // SKIP PAST ARGV[0] (KEEP IT)
-            do
-            {
-                myargv[indexinfile++] = infile+k;
-                while(k < size &&
-                      ((*(infile+k)>= ' '+1) && (*(infile+k)<='z')))
-                    k++;
-                *(infile+k) = 0;
-                while(k < size &&
-                      ((*(infile+k)<= ' ') || (*(infile+k)>'z')))
-                    k++;
-            } while(k < size);
-
-            for (k = 0;k < index;k++)
-                myargv[indexinfile++] = moreargs[k];
-            myargc = indexinfile;
-
-            // DISPLAY ARGS
-            printf("%d command-line args:\n",myargc);
-            for (k=1;k<myargc;k++)
-                printf("%s\n",myargv[k]);
-
-            break;
-        }
-}
-
-
-//
 // D_DoomMain
 //
 void D_DoomMain (void)
@@ -824,13 +733,7 @@ void D_DoomMain (void)
     int             p;
     char            file[256];
 
-    FindResponseFile ();
-
     IdentifyVersion ();
-
-#ifndef PSP //__VBCC__
-    setbuf (stdout, NULL);
-#endif
 
     modifiedgame = false;
 
@@ -901,18 +804,6 @@ void D_DoomMain (void)
 
     if (devparm)
         printf(D_DEVSTR);
-
-    if (M_CheckParm("-cdrom"))
-    {
-    	char temp[256];
-
-        printf(D_CDROM);
-		strcpy(temp, psp_home);
-		strcat(temp, "doomdata");
-		mkdir(temp, 0);
-		strcat(temp, "/default.cfg");
-		strcpy(basedefault, temp);
-    }
 
     // turbo option
     if ( (p=M_CheckParm ("-turbo")) )
@@ -1070,10 +961,10 @@ void D_DoomMain (void)
     {
         // These are the lumps that will be checked in IWAD,
         // if any one is not present, execution will be aborted.
-        char name[23][8]=
+        char name[23][9]=
         {
             "e2m1","e2m2","e2m3","e2m4","e2m5","e2m6","e2m7","e2m8","e2m9",
-            "e3m1","e3m3","e3m3","e3m4","e3m5","e3m6","e3m7","e3m8","e3m9",
+            "e3m1","e3m2","e3m3","e3m4","e3m5","e3m6","e3m7","e3m8","e3m9",
             "dphoof","bfgga0","heada1","cybra1","spida1d1"
         };
         int i;
@@ -1093,20 +984,11 @@ void D_DoomMain (void)
     // If additonal PWAD files are used, print modified banner
     if (modifiedgame)
     {
-        /*m*/printf (
-#ifndef PSP
-            "===========================================================================\n"
-            "ATTENTION:  This version of DOOM has been modified.  If you would like to\n"
-            "get a copy of the original game, call 1-800-IDGAMES or see the readme file.\n"
-            "        You will not receive technical support for modified games.\n"
-            "                      press enter to continue\n"
-            "===========================================================================\n"
-#else
+        printf (
             "===================================================================="
             "ATTENTION: This game is using modifications to the base game. Using "
             "               modifications make affect game play.                 "
             "===================================================================="
-#endif
             );
         getchar ();
     }
@@ -1117,31 +999,18 @@ void D_DoomMain (void)
       case shareware:
       case indetermined:
         printf (
-#ifndef PSP
-            "===========================================================================\n"
-            "                                Shareware!\n"
-            "===========================================================================\n"
-#else
             "===================================================================="
             "                             Shareware!                             "
             "===================================================================="
-#endif
         );
         break;
       case registered:
       case retail:
       case commercial:
         printf (
-#ifndef PSP
-            "===========================================================================\n"
-            "                 Commercial product - do not distribute!\n"
-            "         Please report software piracy to the SPA: 1-800-388-PIR8\n"
-            "===========================================================================\n"
-#else
             "===================================================================="
             "              Commercial product - do not distribute!               "
             "===================================================================="
-#endif
         );
         break;
 
@@ -1212,15 +1081,7 @@ void D_DoomMain (void)
     p = M_CheckParm ("-loadgame");
     if (p && p < myargc-1)
     {
-        if (M_CheckParm("-cdrom"))
-        {
-        	char temp[256];
-        	strcpy(temp, psp_home);
-        	strcat(temp, "doomdata/");
-            sprintf(file, "%s"SAVEGAMENAME"%c.dsg", temp, myargv[p+1][0]);
-        }
-        else
-            sprintf(file, "%ssaves/"SAVEGAMENAME"%c.dsg",psp_home,myargv[p+1][0]);
+        snprintf(file, sizeof(file), "%ssaves/"SAVEGAMENAME"%c.dsg",psp_home,myargv[p+1][0]);
         G_LoadGame (file);
     }
 

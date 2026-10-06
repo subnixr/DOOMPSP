@@ -26,9 +26,6 @@
 #include "d_player.h"
 
 
-#ifdef __GNUG__
-#pragma interface
-#endif
 
 
 //
@@ -54,10 +51,6 @@ typedef enum
     CMD_GET	= 2
 
 }  command_t;
-
-#ifdef __SASC
-#pragma options align=mac68k
-#endif
 
 //
 // Network packet data.
@@ -124,10 +117,6 @@ typedef struct
     // The packet data to be sent.
     doomdata_t		 data;
 }  doomcom_t;
-
-#ifdef __SASC
-#pragma options align=power
-#endif
 
 
 // Create any new ticcmds and broadcast to other players.

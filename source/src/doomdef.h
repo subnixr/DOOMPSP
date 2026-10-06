@@ -26,11 +26,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef __SASC
-#define FAR 
-#else
 #define FAR
-#endif
 
 //
 // Global parameters/defines.
@@ -81,14 +77,6 @@ typedef enum
 //#define RANGECHECK
 
 // Do or do not use external soundserver.
-// The sndserver binary to be run separately
-//  has been introduced by Dave Taylor.
-// The integrated sound support is experimental,
-//  and unfinished. Default is synchronous.
-// Experimental asynchronous timer based is
-//  handled by SNDINTR. 
-//#define SNDSERV  1
-//#define SNDINTR  1
 
 
 // This one switches between MIT SHM (no proper mouse)

@@ -78,8 +78,5 @@ shell:
 pull:
 	$(DOCKER) pull --platform $(PLATFORM) $(IMAGE)
 
-deploy:
-	./deploy.sh
-
 run: doom
 	$(PPSSPP) "$(CURDIR)/EBOOT.PBP"
