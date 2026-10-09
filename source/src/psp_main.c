@@ -1534,7 +1534,7 @@ void psp_gui(void)
 		{ "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
 		{ "Uses intraFont by BenHur", GUI_CENTER | GUI_TEXT, (void *)0xFF8888, 0, GUI_DISABLED },
 		{ "TV-out support lib thanks to Dark_AleX", GUI_CENTER | GUI_TEXT, (void *)0xFFFFFF, 0, GUI_DISABLED },
-		{ "Sleep, launcher and control improvements by Subnixr", GUI_CENTER | GUI_TEXT, (void *)0xFFFFFF, 0, GUI_DISABLED },
+		{ "Sleep, launcher, ad-hoc, and control improvements by Subnixr", GUI_CENTER | GUI_TEXT, (void *)0xFFFFFF, 0, GUI_DISABLED },
         { "", GUI_CENTER | GUI_DIVIDER, 0, 0, GUI_DISABLED },
 		{ 0, GUI_END_OF_MENU, 0, 0, 0 } // end of menu
 	};
